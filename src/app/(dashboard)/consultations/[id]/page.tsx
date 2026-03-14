@@ -3,7 +3,7 @@ import { redirect } from "next/navigation";
 import { ConsultationRoom } from "@/features/consultations/consultation-room";
 import { getCurrentUser } from "@/lib/auth";
 import { getConsultationRoomData } from "@/lib/appointments-data";
-import { env } from "@/lib/env";
+import { serverEnv } from "@/lib/env";
 
 export default async function ConsultationRoomPage({ params }: { params: Promise<{ id: string }> }) {
   const [{ id }, user] = await Promise.all([params, getCurrentUser()]);
@@ -22,7 +22,7 @@ export default async function ConsultationRoomPage({ params }: { params: Promise
     const cookieStore = await cookies();
     const cookieHeader = cookieStore.getAll().map((cookie) => `${cookie.name}=${cookie.value}`).join("; ");
 
-    await fetch(`${env.NEXT_PUBLIC_APP_URL}/api/consultations/create-room`, {
+    await fetch(`${serverEnv.NEXT_PUBLIC_APP_URL}/api/consultations/create-room`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",

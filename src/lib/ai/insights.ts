@@ -1,6 +1,6 @@
-﻿import Anthropic from "@anthropic-ai/sdk";
+import Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
-import { env } from "@/lib/env";
+import { serverEnv } from "@/lib/env";
 import {
   buildCarePlanPrompt,
   buildCyclePredictionPrompt,
@@ -68,7 +68,7 @@ const promptBuilders: Record<InsightType, (data: unknown) => string> = {
 };
 
 function isAiInsightsEnabled() {
-  return env.NEXT_PUBLIC_AI_INSIGHTS_ENABLED === "true";
+  return serverEnv.NEXT_PUBLIC_AI_INSIGHTS_ENABLED === "true";
 }
 
 function parseClaudeResponse(type: InsightType, value: string) {
@@ -186,11 +186,11 @@ function buildMockInsight(type: InsightType, data: unknown) {
 }
 
 export async function generateAiInsight(type: InsightType, data: unknown) {
-  if (!env.ANTHROPIC_API_KEY || !isAiInsightsEnabled()) {
+  if (!serverEnv.ANTHROPIC_API_KEY || !isAiInsightsEnabled()) {
     return buildMockInsight(type, data);
   }
 
-  const client = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY });
+  const client = new Anthropic({ apiKey: serverEnv.ANTHROPIC_API_KEY });
   const message = await client.messages.create({
     model: "claude-sonnet-4-20250514",
     max_tokens: 500,

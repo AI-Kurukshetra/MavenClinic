@@ -1,3 +1,4 @@
+import type { Route } from "next";
 import Link from "next/link";
 import { BarChart3, Building2, Settings2, ShieldCheck } from "lucide-react";
 import { DashboardShell } from "@/components/health/dashboard-shell";
@@ -7,14 +8,14 @@ import { StatCard } from "@/components/ui/stat-card";
 
 const workflows = [
   {
-    href: "/super/employers",
+    href: "/super/employers" as Route,
     title: "Employer oversight",
     description: "Review contracts, account health, and renewal readiness across sponsoring employers.",
     cta: "Open employers",
     icon: Building2,
   },
   {
-    href: "/super/system",
+    href: "/super/system" as Route,
     title: "System controls",
     description: "Track feature flags, policy rollout status, and operational controls from one place.",
     cta: "Open system",

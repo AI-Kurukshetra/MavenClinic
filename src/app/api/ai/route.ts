@@ -1,26 +1,27 @@
-﻿import { NextResponse } from "next/server";
-import { getCurrentUser } from "@/lib/auth";
 import { aiRequestSchema, generateAiInsight } from "@/lib/ai/insights";
-import { getSupabaseServerClient } from "@/lib/supabase/server";
+import { requireApiUser } from "@/lib/api-auth";
+import { apiError, apiSuccess } from "@/lib/api-response";
+import { sanitizeText } from "@/lib/sanitize";
 
 export async function POST(request: Request) {
-  const user = await getCurrentUser();
-
-  if (!user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
-  const payload = aiRequestSchema.safeParse(await request.json());
-
-  if (!payload.success) {
-    return NextResponse.json({ error: payload.error.issues[0]?.message ?? "Invalid AI request." }, { status: 400 });
-  }
-
   try {
-    const result = await generateAiInsight(payload.data.type, payload.data.data);
+    const authResult = await requireApiUser();
 
-    if (payload.data.type === "symptom_insight" && payload.data.logId && typeof result === "string") {
-      const supabase = await getSupabaseServerClient();
+    if ("error" in authResult) {
+      return authResult.error;
+    }
+
+    const payload = aiRequestSchema.safeParse(await request.json());
+
+    if (!payload.success) {
+      return apiError(400, "invalid_ai_request", payload.error.issues[0]?.message ?? "Invalid AI request.");
+    }
+
+    const { user, supabase } = authResult.context;
+    const result = await generateAiInsight(payload.data.type, payload.data.data);
+    const safeResult = typeof result === "string" ? sanitizeText(result) : result;
+
+    if (payload.data.type === "symptom_insight" && payload.data.logId && typeof safeResult === "string") {
       const { data: log, error: logError } = await supabase
         .from("symptom_logs")
         .select("id")
@@ -29,26 +30,25 @@ export async function POST(request: Request) {
         .maybeSingle();
 
       if (logError) {
-        return NextResponse.json({ error: logError.message }, { status: 400 });
+        return apiError(500, "symptom_log_lookup_failed", "Unable to verify the symptom log for this insight.");
       }
 
       if (!log) {
-        return NextResponse.json({ error: "Symptom log not found." }, { status: 404 });
+        return apiError(404, "symptom_log_not_found", "Symptom log not found.");
       }
 
       const { error: updateError } = await supabase
         .from("symptom_logs")
-        .update({ ai_insight: result })
+        .update({ ai_insight: safeResult })
         .eq("id", payload.data.logId);
 
       if (updateError) {
-        return NextResponse.json({ error: updateError.message }, { status: 400 });
+        return apiError(500, "insight_persist_failed", "Unable to save this insight right now.");
       }
     }
 
-    return NextResponse.json({ result });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Unable to generate insight.";
-    return NextResponse.json({ error: message }, { status: 500 });
+    return apiSuccess({ result: safeResult });
+  } catch {
+    return apiError(500, "ai_generation_failed", "Unable to generate insight.");
   }
 }

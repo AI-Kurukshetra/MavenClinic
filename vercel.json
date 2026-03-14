@@ -1,0 +1,14 @@
+{
+  "buildCommand": "npm run build",
+  "outputDirectory": ".next",
+  "framework": "nextjs",
+  "regions": ["bom1"],
+  "functions": {
+    "src/app/api/**": {
+      "maxDuration": 30
+    },
+    "src/app/api/ai/**": {
+      "maxDuration": 60
+    }
+  }
+}

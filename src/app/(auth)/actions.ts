@@ -1,9 +1,10 @@
 "use server";
 
+import type { Route } from "next";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { ensureProfileForUser, getAuthenticatedRedirectPath, getCurrentProfileWithSync } from "@/lib/auth";
-import { env } from "@/lib/env";
+import { serverEnv } from "@/lib/env";
 import { loginSchema, signupSchema } from "@/lib/auth-form-schemas";
 import {
   getValidProviderInvitation,
@@ -17,9 +18,9 @@ const employerPlanTypes = ["standard", "premium", "enterprise"] as const;
 
 type EmployerPlanType = (typeof employerPlanTypes)[number];
 
-function toRedirect(path: string, params: Record<string, string>): never {
+function toRedirect(path: Route, params: Record<string, string>): never {
   const search = new URLSearchParams(params);
-  redirect(`${path}?${search.toString()}`);
+  redirect(`${path}?${search.toString()}` as Route);
 }
 
 function normalizeCompanyDomain(value: string) {
@@ -40,7 +41,7 @@ function isEmployerPlanType(value: string): value is EmployerPlanType {
 }
 
 function getSafeNextPath(value: string | undefined) {
-  return value && value.startsWith("/") && !value.startsWith("//") ? value : null;
+  return value && value.startsWith("/") && !value.startsWith("//") ? (value as Route) : null;
 }
 
 export async function loginAction(formData: FormData) {
@@ -65,7 +66,7 @@ export async function loginAction(formData: FormData) {
 
   const profile = await getCurrentProfileWithSync(data.user);
   revalidatePath("/");
-  redirect(getSafeNextPath(next) ?? getAuthenticatedRedirectPath(profile));
+  redirect((getSafeNextPath(next) ?? getAuthenticatedRedirectPath(profile)) as Route);
 }
 
 export async function signupAction(formData: FormData) {
@@ -86,7 +87,7 @@ export async function signupAction(formData: FormData) {
     email,
     password,
     options: {
-      emailRedirectTo: `${env.NEXT_PUBLIC_APP_URL}/dashboard`,
+      emailRedirectTo: `${serverEnv.NEXT_PUBLIC_APP_URL}/dashboard`,
       data: {
         full_name: fullName,
       },
@@ -102,7 +103,7 @@ export async function signupAction(formData: FormData) {
   }
 
   revalidatePath("/dashboard");
-  redirect(data.session ? "/onboarding" : "/login?message=Check your email to confirm your account before signing in.");
+  redirect((data.session ? "/onboarding" : "/login?message=Check your email to confirm your account before signing in.") as Route);
 }
 
 export async function registerProviderAction(formData: FormData) {
@@ -325,5 +326,5 @@ export async function registerEmployerAction(formData: FormData) {
 export async function logoutAction() {
   const supabase = await getSupabaseServerClient();
   await supabase.auth.signOut();
-  redirect("/login?message=You have been signed out.");
+  redirect("/login?message=You have been signed out." as Route);
 }

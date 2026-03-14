@@ -1,26 +1,31 @@
-import { NextResponse } from "next/server";
-import { getCurrentUser } from "@/lib/auth";
 import { saveTodaySymptomLogForCurrentUser } from "@/lib/symptoms";
 import { symptomLogSchema } from "@/lib/symptoms-shared";
+import { requireApiUser } from "@/lib/api-auth";
+import { apiError, apiSuccess } from "@/lib/api-response";
+import { sanitizeText } from "@/lib/sanitize";
 
 export async function POST(request: Request) {
-  const user = await getCurrentUser();
-
-  if (!user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
-  const payload = symptomLogSchema.safeParse(await request.json());
-
-  if (!payload.success) {
-    return NextResponse.json({ error: payload.error.issues[0]?.message ?? "Invalid symptom log." }, { status: 400 });
-  }
-
   try {
+    const authResult = await requireApiUser();
+
+    if ("error" in authResult) {
+      return authResult.error;
+    }
+
+    const rawPayload = await request.json();
+    const payload = symptomLogSchema.safeParse({
+      ...rawPayload,
+      notes: sanitizeText(typeof rawPayload?.notes === "string" ? rawPayload.notes : ""),
+    });
+
+    if (!payload.success) {
+      return apiError(400, "invalid_symptom_log", payload.error.issues[0]?.message ?? "Invalid symptom log.");
+    }
+
     const result = await saveTodaySymptomLogForCurrentUser(payload.data);
-    return NextResponse.json({ ok: true, ...result });
+    return apiSuccess({ ok: true, ...result });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unable to save symptoms right now.";
-    return NextResponse.json({ error: message }, { status: message === "Unauthorized" ? 401 : 400 });
+    const status = error instanceof Error && error.message === "Unauthorized" ? 401 : 400;
+    return apiError(status, status === 401 ? "unauthorized" : "symptom_log_save_failed", status === 401 ? "Unauthorized" : "Unable to save symptoms right now.");
   }
 }

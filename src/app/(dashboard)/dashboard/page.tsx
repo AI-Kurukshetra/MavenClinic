@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { Suspense } from "react";
 import { CalendarClock, MessageCircleMore, Video } from "lucide-react";
@@ -12,6 +13,12 @@ import { ProgressRing } from "@/components/ui/progress-ring";
 import { Toast } from "@/components/ui/Toast";
 import { getPatientDashboardData } from "@/lib/data";
 import { formatDate, formatDateTime, formatRelativeTime } from "@/lib/utils";
+
+export const metadata: Metadata = {
+  title: "Dashboard — Maven Clinic",
+};
+
+export const revalidate = 0;
 
 async function DashboardContent() {
   const data = await getPatientDashboardData();

@@ -1,3 +1,4 @@
+import type { Route } from "next";
 import Link from "next/link";
 import { Calendar, HeartHandshake, Sparkles } from "lucide-react";
 import { DashboardShell } from "@/components/health/dashboard-shell";
@@ -6,14 +7,14 @@ import { Card } from "@/components/ui/card";
 
 const partnerFlows = [
   {
-    href: "/partner/appointments",
+    href: "/partner/appointments" as Route,
     title: "Appointment visibility",
     description: "Review shared appointment details and stay aligned on upcoming care moments.",
     cta: "Open appointments",
     icon: Calendar,
   },
   {
-    href: "/partner/pregnancy",
+    href: "/partner/pregnancy" as Route,
     title: "Pregnancy support",
     description: "Access shared milestone visibility and patient-approved pregnancy updates in one place.",
     cta: "Open pregnancy view",

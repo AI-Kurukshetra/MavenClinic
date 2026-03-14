@@ -1,5 +1,6 @@
-﻿import type { Metadata } from "next";
+import type { Metadata } from "next";
 import { DM_Sans, Playfair_Display } from "next/font/google";
+import { env } from "@/lib/env";
 import "./globals.css";
 
 const dmSans = DM_Sans({
@@ -13,8 +14,13 @@ const playfair = Playfair_Display({
 });
 
 export const metadata: Metadata = {
-  title: "Maven Clinic",
+  metadataBase: new URL(env.NEXT_PUBLIC_APP_URL),
+  title: {
+    default: "Maven Clinic",
+    template: "%s | Maven Clinic",
+  },
   description: "Virtual women’s health, fertility, and care coordination platform.",
+  applicationName: "Maven Clinic",
 };
 
 export default function RootLayout({
@@ -30,4 +36,3 @@ export default function RootLayout({
     </html>
   );
 }
-

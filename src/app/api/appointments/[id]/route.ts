@@ -1,205 +1,218 @@
-import { NextResponse } from "next/server";
 import { addMinutes, isAfter } from "date-fns";
-import { getCurrentUser } from "@/lib/auth";
 import { appointmentMutationSchema } from "@/lib/appointments";
 import { getAvailableSlotsForProvider } from "@/lib/appointments-data";
-import { getSupabaseServerClient } from "@/lib/supabase/server";
+import { requireApiUser } from "@/lib/api-auth";
+import { apiError, apiSuccess } from "@/lib/api-response";
+import { sanitizeNullableText } from "@/lib/sanitize";
+import { getSupabaseAdminClient } from "@/lib/supabase/admin";
 
 function hasSlot(availableDates: Awaited<ReturnType<typeof getAvailableSlotsForProvider>>, scheduledAt: string) {
   return availableDates.some((date) => date.slots.some((slot) => slot.startsAt === scheduledAt));
 }
 
 export async function PATCH(request: Request, context: { params: Promise<{ id: string }> }) {
-  const user = await getCurrentUser();
+  try {
+    const authResult = await requireApiUser();
 
-  if (!user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+    if ("error" in authResult) {
+      return authResult.error;
+    }
 
-  const payload = appointmentMutationSchema.safeParse(await request.json());
+    const payload = appointmentMutationSchema.safeParse(await request.json());
 
-  if (!payload.success) {
-    return NextResponse.json({ error: payload.error.issues[0]?.message ?? "Invalid appointment update." }, { status: 400 });
-  }
+    if (!payload.success) {
+      return apiError(400, "invalid_appointment_update", payload.error.issues[0]?.message ?? "Invalid appointment update.");
+    }
 
-  const { id } = await context.params;
-  const supabase = await getSupabaseServerClient();
-  const { data: appointment, error: appointmentError } = await supabase
-    .from("appointments")
-    .select("id, patient_id, provider_id, scheduled_at, status, notes")
-    .eq("id", id)
-    .eq("patient_id", user.id)
-    .maybeSingle();
-
-  if (appointmentError) {
-    return NextResponse.json({ error: appointmentError.message }, { status: 400 });
-  }
-
-  if (!appointment) {
-    return NextResponse.json({ error: "Appointment not found." }, { status: 404 });
-  }
-
-  if (payload.data.action === "save_notes") {
-    const nextNotes = payload.data.notes.trim();
-    const { error: notesError } = await supabase
+    const { id } = await context.params;
+    const { user, supabase } = authResult.context;
+    const { data: appointment, error: appointmentError } = await supabase
       .from("appointments")
-      .update({
-        notes: nextNotes.length ? nextNotes : null,
-        updated_at: new Date().toISOString(),
-      })
+      .select("id, patient_id, provider_id, scheduled_at, status, notes")
+      .eq("id", id)
+      .eq("patient_id", user.id)
+      .maybeSingle();
+
+    if (appointmentError) {
+      return apiError(500, "appointment_lookup_failed", "Unable to load this appointment.");
+    }
+
+    if (!appointment) {
+      return apiError(404, "appointment_not_found", "Appointment not found.");
+    }
+
+    if (payload.data.action === "save_notes") {
+      const nextNotes = sanitizeNullableText(payload.data.notes);
+      const { error: notesError } = await supabase
+        .from("appointments")
+        .update({
+          notes: nextNotes,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", appointment.id)
+        .eq("patient_id", user.id);
+
+      if (notesError) {
+        return apiError(500, "appointment_notes_failed", "Unable to save appointment notes.");
+      }
+
+      return apiSuccess({ ok: true, notes: nextNotes ?? "" });
+    }
+
+    const { data: provider, error: providerError } = await supabase
+      .from("providers")
+      .select("profile_id")
+      .eq("id", appointment.provider_id)
+      .maybeSingle();
+
+    if (providerError) {
+      return apiError(500, "provider_lookup_failed", "Unable to verify the assigned provider.");
+    }
+
+    if (!provider?.profile_id) {
+      return apiError(400, "provider_profile_missing", "Provider profile not found.");
+    }
+
+    if (payload.data.action === "reschedule") {
+      if (appointment.status !== "scheduled") {
+        return apiError(400, "appointment_not_reschedulable", "Only scheduled appointments can be rescheduled.");
+      }
+
+      const availableDates = await getAvailableSlotsForProvider(appointment.provider_id, appointment.id);
+      if (!hasSlot(availableDates, payload.data.scheduledAt)) {
+        return apiError(409, "slot_unavailable", "That time slot is no longer available. Please choose another.");
+      }
+
+      const { error: updateError } = await supabase
+        .from("appointments")
+        .update({
+          scheduled_at: payload.data.scheduledAt,
+          status: "scheduled",
+          started_at: null,
+          completed_at: null,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", appointment.id)
+        .eq("patient_id", user.id);
+
+      if (updateError) {
+        return apiError(500, "appointment_reschedule_failed", "Unable to reschedule this appointment.");
+      }
+
+      const admin = getSupabaseAdminClient();
+      const { error: notificationError } = await admin.from("notifications").insert({
+        recipient_id: provider.profile_id,
+        actor_id: user.id,
+        appointment_id: appointment.id,
+        type: "appointment_rescheduled",
+        title: "Appointment rescheduled",
+        body: sanitizeNullableText("A patient moved their appointment to a new time slot."),
+        link: "/provider/dashboard",
+      });
+
+      if (notificationError) {
+        return apiError(500, "notification_create_failed", "Appointment rescheduled, but the provider notification could not be created.");
+      }
+
+      return apiSuccess({ ok: true, toast: "appointment-rescheduled" });
+    }
+
+    if (payload.data.action === "cancel") {
+      const { error: cancelError } = await supabase
+        .from("appointments")
+        .update({
+          status: "cancelled",
+          cancellation_reason: payload.data.reason,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", appointment.id)
+        .eq("patient_id", user.id);
+
+      if (cancelError) {
+        return apiError(500, "appointment_cancel_failed", "Unable to cancel this appointment.");
+      }
+
+      const admin = getSupabaseAdminClient();
+      const { error: notificationError } = await admin.from("notifications").insert({
+        recipient_id: provider.profile_id,
+        actor_id: user.id,
+        appointment_id: appointment.id,
+        type: "appointment_cancelled",
+        title: "Appointment cancelled",
+        body: sanitizeNullableText("A patient cancelled their appointment."),
+        link: "/provider/dashboard",
+      });
+
+      if (notificationError) {
+        return apiError(500, "notification_create_failed", "Appointment cancelled, but the provider notification could not be created.");
+      }
+
+      return apiSuccess({ ok: true, toast: "appointment-cancelled" });
+    }
+
+    if (payload.data.action === "start") {
+      const now = new Date();
+      const scheduledTime = new Date(appointment.scheduled_at);
+      const latestJoin = addMinutes(scheduledTime, 10);
+
+      if (
+        isAfter(now, addMinutes(scheduledTime, 120)) ||
+        (isAfter(scheduledTime, now) && isAfter(scheduledTime, latestJoin))
+      ) {
+        return apiError(400, "consultation_not_open", "This consultation is not open yet.");
+      }
+
+      const { error: startError } = await supabase
+        .from("appointments")
+        .update({ status: "in_progress", started_at: now.toISOString(), updated_at: now.toISOString() })
+        .eq("id", appointment.id)
+        .eq("patient_id", user.id);
+
+      if (startError) {
+        return apiError(500, "consultation_start_failed", "Unable to start this consultation.");
+      }
+
+      return apiSuccess({ ok: true });
+    }
+
+    const { error: completeError } = await supabase
+      .from("appointments")
+      .update({ status: "completed", completed_at: new Date().toISOString(), updated_at: new Date().toISOString() })
       .eq("id", appointment.id)
       .eq("patient_id", user.id);
 
-    if (notesError) {
-      return NextResponse.json({ error: notesError.message }, { status: 400 });
+    if (completeError) {
+      return apiError(500, "consultation_complete_failed", "Unable to complete this consultation.");
     }
 
-    return NextResponse.json({ ok: true, notes: nextNotes });
-  }
-
-  const { data: provider, error: providerError } = await supabase
-    .from("providers")
-    .select("profile_id")
-    .eq("id", appointment.provider_id)
-    .maybeSingle();
-
-  if (providerError) {
-    return NextResponse.json({ error: providerError.message }, { status: 400 });
-  }
-
-  if (!provider?.profile_id) {
-    return NextResponse.json({ error: "Provider profile not found." }, { status: 400 });
-  }
-
-  if (payload.data.action === "reschedule") {
-    if (appointment.status !== "scheduled") {
-      return NextResponse.json({ error: "Only scheduled appointments can be rescheduled." }, { status: 400 });
-    }
-
-    const availableDates = await getAvailableSlotsForProvider(appointment.provider_id, appointment.id);
-    if (!hasSlot(availableDates, payload.data.scheduledAt)) {
-      return NextResponse.json({ error: "That time slot is no longer available. Please choose another." }, { status: 409 });
-    }
-
-    const { error: updateError } = await supabase
-      .from("appointments")
-      .update({
-        scheduled_at: payload.data.scheduledAt,
-        status: "scheduled",
-        started_at: null,
-        completed_at: null,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", appointment.id)
-      .eq("patient_id", user.id);
-
-    if (updateError) {
-      return NextResponse.json({ error: updateError.message }, { status: 400 });
-    }
-
-    const { error: notificationError } = await supabase.from("notifications").insert({
-      recipient_id: provider.profile_id,
-      actor_id: user.id,
-      appointment_id: appointment.id,
-      type: "appointment_rescheduled",
-      title: "Appointment rescheduled",
-      body: "A patient moved their appointment to a new time slot.",
-      link: "/provider/dashboard",
-    });
+    const admin = getSupabaseAdminClient();
+    const { error: notificationError } = await admin.from("notifications").insert([
+      {
+        recipient_id: user.id,
+        actor_id: user.id,
+        appointment_id: appointment.id,
+        type: "consultation_complete",
+        title: "Consultation complete",
+        body: sanitizeNullableText("Your visit has been marked complete. Your dashboard has the latest status."),
+        link: "/dashboard",
+      },
+      {
+        recipient_id: provider.profile_id,
+        actor_id: user.id,
+        appointment_id: appointment.id,
+        type: "consultation_complete",
+        title: "Consultation finished",
+        body: sanitizeNullableText("The patient ended the consultation and the appointment is now complete."),
+        link: "/provider/dashboard",
+      },
+    ]);
 
     if (notificationError) {
-      return NextResponse.json({ error: notificationError.message }, { status: 400 });
+      return apiError(500, "notification_create_failed", "Consultation completed, but follow-up notifications could not be created.");
     }
 
-    return NextResponse.json({ ok: true, toast: "appointment-rescheduled" });
+    return apiSuccess({ ok: true, redirectTo: "/dashboard?toast=consultation-complete" });
+  } catch {
+    return apiError(500, "appointment_update_failed", "Unable to update this appointment right now.");
   }
-
-  if (payload.data.action === "cancel") {
-    const { error: cancelError } = await supabase
-      .from("appointments")
-      .update({
-        status: "cancelled",
-        cancellation_reason: payload.data.reason,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", appointment.id)
-      .eq("patient_id", user.id);
-
-    if (cancelError) {
-      return NextResponse.json({ error: cancelError.message }, { status: 400 });
-    }
-
-    const { error: notificationError } = await supabase.from("notifications").insert({
-      recipient_id: provider.profile_id,
-      actor_id: user.id,
-      appointment_id: appointment.id,
-      type: "appointment_cancelled",
-      title: "Appointment cancelled",
-      body: "A patient cancelled their appointment.",
-      link: "/provider/dashboard",
-    });
-
-    if (notificationError) {
-      return NextResponse.json({ error: notificationError.message }, { status: 400 });
-    }
-
-    return NextResponse.json({ ok: true, toast: "appointment-cancelled" });
-  }
-
-  if (payload.data.action === "start") {
-    const now = new Date();
-    const latestJoin = addMinutes(new Date(appointment.scheduled_at), 10);
-    if (isAfter(now, addMinutes(new Date(appointment.scheduled_at), 120)) || isAfter(new Date(appointment.scheduled_at), now) && isAfter(new Date(appointment.scheduled_at), latestJoin)) {
-      return NextResponse.json({ error: "This consultation is not open yet." }, { status: 400 });
-    }
-
-    const { error: startError } = await supabase
-      .from("appointments")
-      .update({ status: "in_progress", started_at: now.toISOString(), updated_at: now.toISOString() })
-      .eq("id", appointment.id)
-      .eq("patient_id", user.id);
-
-    if (startError) {
-      return NextResponse.json({ error: startError.message }, { status: 400 });
-    }
-
-    return NextResponse.json({ ok: true });
-  }
-
-  const { error: completeError } = await supabase
-    .from("appointments")
-    .update({ status: "completed", completed_at: new Date().toISOString(), updated_at: new Date().toISOString() })
-    .eq("id", appointment.id)
-    .eq("patient_id", user.id);
-
-  if (completeError) {
-    return NextResponse.json({ error: completeError.message }, { status: 400 });
-  }
-
-  const { error: notificationError } = await supabase.from("notifications").insert([
-    {
-      recipient_id: user.id,
-      actor_id: user.id,
-      appointment_id: appointment.id,
-      type: "consultation_complete",
-      title: "Consultation complete",
-      body: "Your visit has been marked complete. Your dashboard has the latest status.",
-      link: "/dashboard",
-    },
-    {
-      recipient_id: provider.profile_id,
-      actor_id: user.id,
-      appointment_id: appointment.id,
-      type: "consultation_complete",
-      title: "Consultation finished",
-      body: "The patient ended the consultation and the appointment is now complete.",
-      link: "/provider/dashboard",
-    },
-  ]);
-
-  if (notificationError) {
-    return NextResponse.json({ error: notificationError.message }, { status: 400 });
-  }
-
-  return NextResponse.json({ ok: true, redirectTo: "/dashboard?toast=consultation-complete" });
 }

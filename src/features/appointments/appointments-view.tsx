@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useTransition } from "react";
+import type { Route } from "next";
 import { useRouter } from "next/navigation";
 import {
   Activity,
@@ -503,7 +504,7 @@ export function AppointmentsView({ currentUserId, upcomingAppointments, bookingP
                 key={appointment.id}
                 appointment={appointment}
                 canJoin={isJoinWindow(appointment.scheduledAt, appointment.status)}
-                joinHref={`/consultations/${appointment.id}`}
+                joinHref={`/consultations/${appointment.id}` as Route}
                 onReschedule={appointment.status === "scheduled" ? () => openReschedule(appointment) : undefined}
                 onCancel={appointment.status === "scheduled" ? () => setCancelAppointment(appointment) : undefined}
               />

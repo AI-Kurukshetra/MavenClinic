@@ -1,11 +1,11 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createServerClient } from "@supabase/ssr";
+import { env } from "@/lib/env";
 import {
   getAuthenticatedRedirectPath,
   patientRoutePrefixes,
   type AppRole,
 } from "@/lib/roles";
-import { env } from "@/lib/env";
 
 type MiddlewareProfile = {
   role: AppRole | null;
@@ -44,11 +44,59 @@ function getRequiredRoles(pathname: string) {
   return roleRouteRules.find((rule) => matchesPath(pathname, rule.prefix))?.roles ?? null;
 }
 
+function buildPermissionsPolicy(pathname: string) {
+  if (pathname.startsWith("/consultations")) {
+    return "camera=(self), microphone=(self), geolocation=()";
+  }
+
+  return "camera=(), microphone=(), geolocation=()";
+}
+
+function buildContentSecurityPolicy(pathname: string) {
+  const connectSources = [
+    "'self'",
+    "https://*.supabase.co",
+    "wss://*.supabase.co",
+  ];
+
+  if (pathname.startsWith("/consultations")) {
+    connectSources.push("https://api.daily.co", "https://*.daily.co", "wss://*.daily.co");
+  }
+
+  return [
+    "default-src 'self'",
+    "base-uri 'self'",
+    "frame-ancestors 'none'",
+    "form-action 'self'",
+    "img-src 'self' data: blob: https://*.supabase.co",
+    "font-src 'self' https://fonts.gstatic.com",
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+    "script-src 'self' 'unsafe-inline'",
+    `connect-src ${connectSources.join(" ")}`,
+    "frame-src 'self' https://*.daily.co",
+    "media-src 'self' blob:",
+    "worker-src 'self' blob:",
+    "object-src 'none'",
+    "upgrade-insecure-requests",
+  ].join('; ');
+}
+
+function applySecurityHeaders(response: NextResponse, pathname: string) {
+  response.headers.set("Content-Security-Policy", buildContentSecurityPolicy(pathname));
+  response.headers.set("X-Frame-Options", "DENY");
+  response.headers.set("X-Content-Type-Options", "nosniff");
+  response.headers.set("Referrer-Policy", "strict-origin-when-cross-origin");
+  response.headers.set("Permissions-Policy", buildPermissionsPolicy(pathname));
+  response.headers.set("X-DNS-Prefetch-Control", "on");
+  response.headers.set("Strict-Transport-Security", "max-age=63072000; includeSubDomains; preload");
+  return response;
+}
+
 function redirectTo(request: NextRequest, pathname: string) {
   const url = request.nextUrl.clone();
   url.pathname = pathname;
   url.search = "";
-  return NextResponse.redirect(url);
+  return applySecurityHeaders(NextResponse.redirect(url), request.nextUrl.pathname);
 }
 
 function redirectToLogin(request: NextRequest) {
@@ -56,7 +104,7 @@ function redirectToLogin(request: NextRequest) {
   url.pathname = "/login";
   url.search = "";
   url.searchParams.set("next", `${request.nextUrl.pathname}${request.nextUrl.search}`);
-  return NextResponse.redirect(url);
+  return applySecurityHeaders(NextResponse.redirect(url), request.nextUrl.pathname);
 }
 
 export async function updateSession(request: NextRequest) {
@@ -92,7 +140,7 @@ export async function updateSession(request: NextRequest) {
   } = await supabase.auth.getUser();
 
   if (!user) {
-    return protectedPath ? redirectToLogin(request) : response;
+    return protectedPath ? redirectToLogin(request) : applySecurityHeaders(response, pathname);
   }
 
   const { data: profileData } = await supabase
@@ -121,7 +169,7 @@ export async function updateSession(request: NextRequest) {
       return redirectTo(request, "/dashboard");
     }
 
-    return response;
+    return applySecurityHeaders(response, pathname);
   }
 
   if (patientAppPath) {
@@ -138,5 +186,5 @@ export async function updateSession(request: NextRequest) {
     return redirectTo(request, getAuthenticatedRedirectPath(profile));
   }
 
-  return response;
+  return applySecurityHeaders(response, pathname);
 }

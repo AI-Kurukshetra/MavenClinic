@@ -1,15 +1,16 @@
+import type { Route } from "next";
 import Link from "next/link";
 import { ArrowLeft, ArrowRight } from "lucide-react";
-import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
 
 type Props = {
   badge: string;
   title: string;
   description: string;
-  dashboardHref: string;
+  dashboardHref: Route;
   dashboardLabel: string;
-  nextHref?: string;
+  nextHref?: Route;
   nextLabel?: string;
 };
 

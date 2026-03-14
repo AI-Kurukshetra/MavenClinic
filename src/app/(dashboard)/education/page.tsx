@@ -1,7 +1,14 @@
-﻿import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
+import type { Metadata } from "next";
 import { DashboardShell } from "@/components/health/dashboard-shell";
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
 import { getEducationData } from "@/lib/data";
+
+export const metadata: Metadata = {
+  title: "Education Library — Maven Clinic",
+};
+
+export const revalidate = 3600;
 
 export default async function EducationPage() {
   const { articles } = await getEducationData();
@@ -22,4 +29,3 @@ export default async function EducationPage() {
     </DashboardShell>
   );
 }
-

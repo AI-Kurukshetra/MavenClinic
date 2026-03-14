@@ -1,4 +1,4 @@
-import { env } from "@/lib/env";
+import { serverEnv } from "@/lib/env";
 
 export async function ensureConsultationRoom({
   supabase,
@@ -23,7 +23,7 @@ export async function ensureConsultationRoom({
 
   const fallbackUrl = `/consultations/${appointmentId}/demo`;
 
-  if (!env.DAILY_API_KEY) {
+  if (!serverEnv.DAILY_API_KEY) {
     const { error } = await supabase
       .from("appointments")
       .update({ video_room_url: fallbackUrl, updated_at: new Date().toISOString() })
@@ -44,7 +44,7 @@ export async function ensureConsultationRoom({
   const response = await fetch("https://api.daily.co/v1/rooms", {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${env.DAILY_API_KEY}`,
+      Authorization: `Bearer ${serverEnv.DAILY_API_KEY}`,
       "Content-Type": "application/json",
     },
     body: JSON.stringify({

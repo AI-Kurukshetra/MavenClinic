@@ -1,5 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
-import { env } from "@/lib/env";
+import { serverEnv } from "@/lib/env";
 
 type AdminDatabase = {
   public: {
@@ -265,12 +265,12 @@ type AdminDatabase = {
 let adminClient: ReturnType<typeof createClient<AdminDatabase>> | undefined;
 
 export function getSupabaseAdminClient() {
-  if (!env.SUPABASE_SERVICE_ROLE_KEY) {
+  if (!serverEnv.SUPABASE_SERVICE_ROLE_KEY) {
     throw new Error("Missing required environment variable: SUPABASE_SERVICE_ROLE_KEY");
   }
 
   if (!adminClient) {
-    adminClient = createClient<AdminDatabase>(env.NEXT_PUBLIC_SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, {
+    adminClient = createClient<AdminDatabase>(serverEnv.NEXT_PUBLIC_SUPABASE_URL, serverEnv.SUPABASE_SERVICE_ROLE_KEY, {
       auth: {
         autoRefreshToken: false,
         persistSession: false,

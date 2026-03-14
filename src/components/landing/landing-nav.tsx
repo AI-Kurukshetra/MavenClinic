@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
@@ -6,11 +6,11 @@ import { ArrowRight, Menu, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const links = [
-  { href: "#patients", label: "For Patients" },
-  { href: "#providers", label: "For Providers" },
-  { href: "#employers", label: "For Employers" },
-  { href: "#how-it-works", label: "How it works" },
-];
+  { href: { pathname: "/", hash: "patients" }, label: "For Patients" },
+  { href: { pathname: "/", hash: "providers" }, label: "For Providers" },
+  { href: { pathname: "/", hash: "employers" }, label: "For Employers" },
+  { href: { pathname: "/", hash: "how-it-works" }, label: "How it works" },
+] as const;
 
 export function LandingNav() {
   const [menuOpen, setMenuOpen] = useState(false);
@@ -46,7 +46,7 @@ export function LandingNav() {
 
           <nav className="hidden items-center gap-8 text-sm text-[var(--foreground-muted)] lg:flex">
             {links.map((link) => (
-              <Link key={link.href} href={link.href} className="transition hover:text-[var(--foreground)]">
+              <Link key={link.label} href={link.href} className="transition hover:text-[var(--foreground)]">
                 {link.label}
               </Link>
             ))}
@@ -93,7 +93,7 @@ export function LandingNav() {
             <div className="space-y-3">
               {links.map((link) => (
                 <Link
-                  key={link.href}
+                  key={link.label}
                   href={link.href}
                   className="block rounded-[28px] border border-[var(--border)] bg-white px-5 py-4 text-lg font-medium shadow-[0_18px_40px_rgba(25,22,17,0.04)]"
                   onClick={() => setMenuOpen(false)}

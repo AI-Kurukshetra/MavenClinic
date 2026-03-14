@@ -346,3 +346,297 @@ create policy "Users update own notifications" on public.notifications for updat
 
 drop policy if exists "Actors create notifications" on public.notifications;
 create policy "Actors create notifications" on public.notifications for insert with check (auth.uid() = actor_id);
+-- SECURITY HARDENING POLICIES (2026-03-14)
+alter table public.providers enable row level security;
+alter table public.provider_availability enable row level security;
+alter table public.fertility_data enable row level security;
+alter table public.care_plans enable row level security;
+alter table public.employers enable row level security;
+
+drop policy if exists "Users read own profile" on public.profiles;
+drop policy if exists "Users update own profile" on public.profiles;
+drop policy if exists "Users read provider profiles" on public.profiles;
+drop policy if exists "Providers read assigned patient profiles" on public.profiles;
+drop policy if exists "users_read_own_profile" on public.profiles;
+drop policy if exists "users_update_own_profile" on public.profiles;
+drop policy if exists "users_insert_own_profile" on public.profiles;
+drop policy if exists "admins_read_all_profiles" on public.profiles;
+drop policy if exists "admins_manage_profiles" on public.profiles;
+drop policy if exists "public_read_active_provider_profiles" on public.profiles;
+drop policy if exists "providers_read_assigned_patient_profiles" on public.profiles;
+create policy "users_read_own_profile" on public.profiles
+  for select using (auth.uid() = id);
+create policy "users_update_own_profile" on public.profiles
+  for update using (auth.uid() = id)
+  with check (
+    auth.uid() = id
+    and role = (select p.role from public.profiles p where p.id = auth.uid())
+  );
+create policy "users_insert_own_profile" on public.profiles
+  for insert with check (
+    auth.uid() = id
+    and coalesce(role, 'patient') = 'patient'
+  );
+create policy "admins_read_all_profiles" on public.profiles
+  for select using (
+    exists (
+      select 1 from public.profiles p
+      where p.id = auth.uid()
+        and p.role in ('clinic_admin', 'super_admin')
+    )
+  );
+create policy "admins_manage_profiles" on public.profiles
+  for update using (
+    exists (
+      select 1 from public.profiles p
+      where p.id = auth.uid()
+        and p.role in ('clinic_admin', 'super_admin')
+    )
+  )
+  with check (true);
+create policy "public_read_active_provider_profiles" on public.profiles
+  for select using (
+    exists (
+      select 1 from public.providers provider_profile
+      where provider_profile.profile_id = profiles.id
+        and provider_profile.accepting_patients = true
+    )
+  );
+create policy "providers_read_assigned_patient_profiles" on public.profiles
+  for select using (
+    exists (
+      select 1
+      from public.providers own_provider
+      join public.appointments appointment on appointment.provider_id = own_provider.id
+      where own_provider.profile_id = auth.uid()
+        and appointment.patient_id = profiles.id
+    )
+  );
+
+drop policy if exists "public_read_active_providers" on public.providers;
+drop policy if exists "providers_read_own_record" on public.providers;
+drop policy if exists "providers_update_own_record" on public.providers;
+drop policy if exists "admins_manage_providers" on public.providers;
+create policy "public_read_active_providers" on public.providers
+  for select using (accepting_patients = true or profile_id = auth.uid());
+create policy "providers_read_own_record" on public.providers
+  for select using (profile_id = auth.uid());
+create policy "providers_update_own_record" on public.providers
+  for update using (profile_id = auth.uid())
+  with check (profile_id = auth.uid());
+create policy "admins_manage_providers" on public.providers
+  for all using (
+    exists (
+      select 1 from public.profiles p
+      where p.id = auth.uid()
+        and p.role in ('clinic_admin', 'super_admin')
+    )
+  )
+  with check (
+    exists (
+      select 1 from public.profiles p
+      where p.id = auth.uid()
+        and p.role in ('clinic_admin', 'super_admin')
+    )
+  );
+
+drop policy if exists "Providers manage own availability" on public.provider_availability;
+drop policy if exists "public_read_active_provider_availability" on public.provider_availability;
+drop policy if exists "providers_manage_own_availability" on public.provider_availability;
+create policy "public_read_active_provider_availability" on public.provider_availability
+  for select using (
+    exists (
+      select 1 from public.providers p
+      where p.id = provider_availability.provider_id
+        and p.accepting_patients = true
+    )
+  );
+create policy "providers_manage_own_availability" on public.provider_availability
+  for all using (
+    exists (
+      select 1 from public.providers p
+      where p.id = provider_availability.provider_id
+        and p.profile_id = auth.uid()
+    )
+  )
+  with check (
+    exists (
+      select 1 from public.providers p
+      where p.id = provider_availability.provider_id
+        and p.profile_id = auth.uid()
+    )
+  );
+
+drop policy if exists "Patients manage own appointments" on public.appointments;
+drop policy if exists "Providers read assigned appointments" on public.appointments;
+drop policy if exists "patients_own_appointments" on public.appointments;
+drop policy if exists "providers_see_assigned_appointments" on public.appointments;
+drop policy if exists "patients_create_own_appointments" on public.appointments;
+drop policy if exists "patients_manage_own_appointments" on public.appointments;
+drop policy if exists "providers_update_assigned_appointments" on public.appointments;
+drop policy if exists "admins_read_all_appointments" on public.appointments;
+create policy "patients_own_appointments" on public.appointments
+  for select using (patient_id = auth.uid());
+create policy "providers_see_assigned_appointments" on public.appointments
+  for select using (
+    exists (
+      select 1 from public.providers p
+      where p.id = appointments.provider_id
+        and p.profile_id = auth.uid()
+    )
+  );
+create policy "patients_create_own_appointments" on public.appointments
+  for insert with check (patient_id = auth.uid());
+create policy "patients_manage_own_appointments" on public.appointments
+  for update using (patient_id = auth.uid())
+  with check (patient_id = auth.uid());
+create policy "providers_update_assigned_appointments" on public.appointments
+  for update using (
+    exists (
+      select 1 from public.providers p
+      where p.id = appointments.provider_id
+        and p.profile_id = auth.uid()
+    )
+  )
+  with check (
+    exists (
+      select 1 from public.providers p
+      where p.id = appointments.provider_id
+        and p.profile_id = auth.uid()
+    )
+  );
+create policy "admins_read_all_appointments" on public.appointments
+  for select using (
+    exists (
+      select 1 from public.profiles p
+      where p.id = auth.uid()
+        and p.role in ('clinic_admin', 'super_admin')
+    )
+  );
+
+drop policy if exists "Conversation participants only" on public.conversations;
+drop policy if exists "Conversation participants insert" on public.conversations;
+drop policy if exists "patients_own_conversations" on public.conversations;
+drop policy if exists "providers_own_conversations" on public.conversations;
+drop policy if exists "patients_create_conversations" on public.conversations;
+create policy "patients_own_conversations" on public.conversations
+  for select using (patient_id = auth.uid());
+create policy "providers_own_conversations" on public.conversations
+  for select using (provider_profile_id = auth.uid());
+create policy "patients_create_conversations" on public.conversations
+  for insert with check (patient_id = auth.uid());
+
+drop policy if exists "Message participants only" on public.messages;
+drop policy if exists "participants_read_messages" on public.messages;
+drop policy if exists "participants_send_messages" on public.messages;
+drop policy if exists "recipients_mark_read" on public.messages;
+create policy "participants_read_messages" on public.messages
+  for select using (
+    exists (
+      select 1 from public.conversations c
+      where c.id = messages.conversation_id
+        and (c.patient_id = auth.uid() or c.provider_profile_id = auth.uid())
+    )
+  );
+create policy "participants_send_messages" on public.messages
+  for insert with check (
+    sender_id = auth.uid()
+    and exists (
+      select 1 from public.conversations c
+      where c.id = messages.conversation_id
+        and (c.patient_id = auth.uid() or c.provider_profile_id = auth.uid())
+    )
+  );
+create policy "recipients_mark_read" on public.messages
+  for update using (
+    exists (
+      select 1 from public.conversations c
+      where c.id = messages.conversation_id
+        and (c.patient_id = auth.uid() or c.provider_profile_id = auth.uid())
+    )
+    and sender_id <> auth.uid()
+  )
+  with check (
+    exists (
+      select 1 from public.conversations c
+      where c.id = messages.conversation_id
+        and (c.patient_id = auth.uid() or c.provider_profile_id = auth.uid())
+    )
+    and sender_id <> auth.uid()
+    and read_at is not null
+  );
+
+drop policy if exists "Patients own symptom logs" on public.symptom_logs;
+drop policy if exists "patients_manage_own_symptom_logs" on public.symptom_logs;
+create policy "patients_manage_own_symptom_logs" on public.symptom_logs
+  for all using (patient_id = auth.uid())
+  with check (patient_id = auth.uid());
+
+drop policy if exists "Patients own cycle logs" on public.cycle_logs;
+drop policy if exists "patients_manage_own_cycle_logs" on public.cycle_logs;
+create policy "patients_manage_own_cycle_logs" on public.cycle_logs
+  for all using (patient_id = auth.uid())
+  with check (patient_id = auth.uid());
+
+drop policy if exists "patients_manage_own_fertility_data" on public.fertility_data;
+create policy "patients_manage_own_fertility_data" on public.fertility_data
+  for all using (patient_id = auth.uid())
+  with check (patient_id = auth.uid());
+
+drop policy if exists "patients_read_own_care_plans" on public.care_plans;
+drop policy if exists "providers_manage_care_plans" on public.care_plans;
+create policy "patients_read_own_care_plans" on public.care_plans
+  for select using (patient_id = auth.uid());
+create policy "providers_manage_care_plans" on public.care_plans
+  for all using (
+    exists (
+      select 1 from public.providers p
+      where p.id = care_plans.provider_id
+        and p.profile_id = auth.uid()
+    )
+  )
+  with check (
+    exists (
+      select 1 from public.providers p
+      where p.id = care_plans.provider_id
+        and p.profile_id = auth.uid()
+    )
+  );
+
+drop policy if exists "Users read own notifications" on public.notifications;
+drop policy if exists "Users update own notifications" on public.notifications;
+drop policy if exists "Actors create notifications" on public.notifications;
+drop policy if exists "users_own_notifications" on public.notifications;
+create policy "users_own_notifications" on public.notifications
+  for select using (recipient_id = auth.uid());
+create policy "users_update_own_notifications" on public.notifications
+  for update using (recipient_id = auth.uid())
+  with check (recipient_id = auth.uid());
+
+drop policy if exists "employer_admin_own_data" on public.employers;
+create policy "employer_admin_own_data" on public.employers
+  for select using (
+    exists (
+      select 1 from public.profiles p
+      where p.id = auth.uid()
+        and p.employer_id = employers.id
+        and p.role = 'employer_admin'
+    )
+  );
+
+drop policy if exists "admins_manage_invitations" on public.invitations;
+create policy "admins_manage_invitations" on public.invitations
+  for all using (
+    exists (
+      select 1 from public.profiles p
+      where p.id = auth.uid()
+        and p.role in ('clinic_admin', 'super_admin')
+    )
+  )
+  with check (
+    exists (
+      select 1 from public.profiles p
+      where p.id = auth.uid()
+        and p.role in ('clinic_admin', 'super_admin')
+    )
+  );

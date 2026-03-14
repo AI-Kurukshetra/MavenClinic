@@ -1,3 +1,4 @@
+import type { Route } from "next";
 import Link from "next/link";
 import { CalendarClock, Video } from "lucide-react";
 import { Avatar } from "@/components/ui/avatar";
@@ -10,7 +11,7 @@ import type { Appointment } from "@/types/domain";
 type AppointmentCardProps = {
   appointment: Appointment;
   canJoin?: boolean;
-  joinHref?: string;
+  joinHref?: Route;
   onReschedule?: () => void;
   onCancel?: () => void;
   busyAction?: "reschedule" | "cancel" | null;

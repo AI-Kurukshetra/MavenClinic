@@ -1,38 +1,40 @@
-﻿import Link from "next/link";
+import Link from "next/link";
 import { Instagram, Linkedin, Twitter } from "lucide-react";
 
 const footerColumns = [
   {
     title: "Product",
     links: [
-      { href: "#patients", label: "Patients" },
-      { href: "#providers", label: "Providers" },
-      { href: "#employers", label: "Employers" },
+      { href: { pathname: "/", hash: "patients" }, label: "Patients" },
+      { href: { pathname: "/", hash: "providers" }, label: "Providers" },
+      { href: { pathname: "/", hash: "employers" }, label: "Employers" },
       { href: "/register/employer", label: "Pricing" },
     ],
   },
   {
     title: "Specialties",
     links: [
-      { href: "#providers", label: "OB/GYN" },
-      { href: "#providers", label: "Fertility" },
-      { href: "#providers", label: "Mental Health" },
-      { href: "#providers", label: "Menopause" },
-      { href: "#providers", label: "Nutrition" },
+      { href: { pathname: "/", hash: "providers" }, label: "OB/GYN" },
+      { href: { pathname: "/", hash: "providers" }, label: "Fertility" },
+      { href: { pathname: "/", hash: "providers" }, label: "Mental Health" },
+      { href: { pathname: "/", hash: "providers" }, label: "Menopause" },
+      { href: { pathname: "/", hash: "providers" }, label: "Nutrition" },
     ],
   },
   {
     title: "Company",
     links: [
-      { href: "#how-it-works", label: "About" },
+      { href: { pathname: "/", hash: "how-it-works" }, label: "About" },
       { href: "/register/provider", label: "Careers" },
-      { href: "#patients", label: "Press" },
+      { href: { pathname: "/", hash: "patients" }, label: "Press" },
       { href: "/login", label: "Privacy" },
       { href: "/login", label: "Terms" },
       { href: "/login", label: "HIPAA" },
     ],
   },
-];
+] as const;
+
+const socialLinks = [Instagram, Linkedin, Twitter] as const;
 
 export function FooterSection() {
   return (
@@ -47,15 +49,15 @@ export function FooterSection() {
             Specialist-led women&apos;s health care that feels warm, clear, and genuinely supportive.
           </p>
           <div className="mt-6 flex items-center gap-3 text-[var(--foreground-muted)]">
-            {[Instagram, Linkedin, Twitter].map((Icon) => (
-              <a
+            {socialLinks.map((Icon) => (
+              <Link
                 key={Icon.displayName}
-                href="#"
+                href={{ pathname: "/", hash: "footer" }}
                 className="inline-flex h-11 w-11 items-center justify-center rounded-full border border-[var(--border)] bg-white transition hover:border-[var(--border-strong)] hover:text-[var(--foreground)]"
                 aria-label="Social link"
               >
                 <Icon className="h-4 w-4" />
-              </a>
+              </Link>
             ))}
           </div>
         </div>

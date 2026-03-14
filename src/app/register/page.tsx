@@ -1,10 +1,11 @@
+import type { Route } from "next";
 import Link from "next/link";
 import { Building2, Stethoscope } from "lucide-react";
 import { Card } from "@/components/ui/card";
 
 const registrationPaths = [
   {
-    href: "/register/provider",
+    href: "/register/provider" as Route,
     title: "Provider registration",
     description:
       "Provider accounts are invite-only. Continue if you already have a Maven Clinic invite token or registration link.",
@@ -12,7 +13,7 @@ const registrationPaths = [
     icon: Stethoscope,
   },
   {
-    href: "/register/employer",
+    href: "/register/employer" as Route,
     title: "Employer registration",
     description:
       "Create your company workspace, add the first employer admin, and launch the benefits dashboard.",

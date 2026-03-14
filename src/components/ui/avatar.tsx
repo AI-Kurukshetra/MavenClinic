@@ -1,4 +1,4 @@
-﻿/* eslint-disable @next/next/no-img-element */
+import Image from "next/image";
 import { cn } from "@/lib/utils";
 
 type AvatarProps = {
@@ -13,6 +13,12 @@ const sizeClasses = {
   lg: "h-16 w-16 text-lg",
 };
 
+const sizePixels = {
+  sm: 40,
+  md: 48,
+  lg: 64,
+};
+
 export function Avatar({ src, name, size = "md" }: AvatarProps) {
   const initials = name
     .split(" ")
@@ -22,7 +28,15 @@ export function Avatar({ src, name, size = "md" }: AvatarProps) {
     .toUpperCase();
 
   if (src) {
-    return <img src={src} alt={name} className={cn("rounded-full object-cover", sizeClasses[size])} />;
+    return (
+      <Image
+        src={src}
+        alt={name}
+        width={sizePixels[size]}
+        height={sizePixels[size]}
+        className={cn("rounded-full object-cover", sizeClasses[size])}
+      />
+    );
   }
 
   return (
@@ -31,5 +45,3 @@ export function Avatar({ src, name, size = "md" }: AvatarProps) {
     </div>
   );
 }
-
-
