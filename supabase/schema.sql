@@ -1,0 +1,348 @@
+-- Enable extensions
+create extension if not exists "uuid-ossp";
+create extension if not exists "pgcrypto";
+
+-- USERS (extends Supabase auth.users)
+create table if not exists public.profiles (
+  id uuid references auth.users(id) primary key,
+  role text check (role in ('patient', 'provider', 'employer_admin', 'clinic_admin', 'super_admin', 'partner')) default 'patient',
+  full_name text,
+  date_of_birth date,
+  pronouns text,
+  language_preference text,
+  health_goals text[] default array[]::text[],
+  existing_conditions text[] default array[]::text[],
+  current_medications text,
+  insurance_carrier text,
+  insurance_member_id text,
+  specialty_needed text,
+  preferred_language text,
+  provider_gender_preference text,
+  phone text,
+  avatar_url text,
+  onboarding_complete boolean default false,
+  employer_id uuid,
+  created_at timestamptz default now()
+);
+
+alter table public.profiles add column if not exists pronouns text;
+alter table public.profiles add column if not exists language_preference text;
+alter table public.profiles add column if not exists health_goals text[] default array[]::text[];
+alter table public.profiles add column if not exists existing_conditions text[] default array[]::text[];
+alter table public.profiles add column if not exists current_medications text;
+alter table public.profiles add column if not exists insurance_carrier text;
+alter table public.profiles add column if not exists insurance_member_id text;
+alter table public.profiles add column if not exists specialty_needed text;
+alter table public.profiles add column if not exists preferred_language text;
+alter table public.profiles add column if not exists provider_gender_preference text;
+
+-- PROVIDERS
+create table if not exists public.providers (
+  id uuid primary key default uuid_generate_v4(),
+  profile_id uuid references public.profiles(id),
+  specialty text not null,
+  license_number text,
+  bio text,
+  languages text[] default array['English'],
+  accepting_patients boolean default true,
+  consultation_fee_cents integer,
+  rating numeric(3,2) default 5.0,
+  total_reviews integer default 0
+);
+
+-- PROVIDER AVAILABILITY
+create table if not exists public.provider_availability (
+  id uuid primary key default uuid_generate_v4(),
+  provider_id uuid references public.providers(id) not null,
+  day_of_week text not null,
+  start_time text not null,
+  end_time text not null,
+  location text default 'Virtual',
+  created_at timestamptz default now()
+);
+
+-- APPOINTMENTS
+create table if not exists public.appointments (
+  id uuid primary key default uuid_generate_v4(),
+  patient_id uuid references public.profiles(id),
+  provider_id uuid references public.providers(id),
+  scheduled_at timestamptz not null,
+  duration_minutes integer default 30,
+  type text check (type in ('video', 'messaging', 'async_review')) default 'video',
+  status text check (status in ('scheduled', 'in_progress', 'completed', 'cancelled', 'no_show')) default 'scheduled',
+  chief_complaint text,
+  video_room_url text,
+  notes text,
+  payment_method text check (payment_method in ('insurance', 'direct_pay')) default 'insurance',
+  cancellation_reason text,
+  started_at timestamptz,
+  completed_at timestamptz,
+  updated_at timestamptz default now(),
+  created_at timestamptz default now()
+);
+
+alter table public.appointments add column if not exists video_room_url text;
+alter table public.appointments add column if not exists notes text;
+alter table public.appointments add column if not exists payment_method text;
+alter table public.appointments add column if not exists cancellation_reason text;
+alter table public.appointments add column if not exists started_at timestamptz;
+alter table public.appointments add column if not exists completed_at timestamptz;
+alter table public.appointments add column if not exists updated_at timestamptz default now();
+
+-- CONVERSATIONS
+create table if not exists public.conversations (
+  id uuid primary key default uuid_generate_v4(),
+  patient_id uuid references public.profiles(id) not null,
+  provider_profile_id uuid references public.profiles(id) not null,
+  created_at timestamptz default now()
+);
+
+alter table public.conversations add column if not exists patient_id uuid references public.profiles(id);
+alter table public.conversations add column if not exists provider_profile_id uuid references public.profiles(id);
+alter table public.conversations add column if not exists created_at timestamptz default now();
+create unique index if not exists conversations_patient_provider_unique on public.conversations (patient_id, provider_profile_id);
+
+-- SYMPTOM LOGS
+create table if not exists public.symptom_logs (
+  id uuid primary key default uuid_generate_v4(),
+  patient_id uuid references public.profiles(id),
+  logged_at timestamptz default now(),
+  symptoms jsonb not null default '{}'::jsonb,
+  mood integer check (mood between 1 and 10),
+  energy integer check (energy between 1 and 10),
+  pain_level integer check (pain_level between 0 and 10),
+  sleep_hours numeric(3,1),
+  notes text,
+  ai_insight text
+);
+
+alter table public.symptom_logs add column if not exists sleep_hours numeric(3,1);
+
+-- CYCLE TRACKING
+create table if not exists public.cycle_logs (
+  id uuid primary key default uuid_generate_v4(),
+  patient_id uuid references public.profiles(id),
+  period_start date,
+  period_end date,
+  cycle_length integer,
+  flow_intensity text check (flow_intensity in ('spotting', 'light', 'medium', 'heavy')),
+  symptoms jsonb default '{}'::jsonb,
+  ovulation_date date,
+  fertile_window_start date,
+  fertile_window_end date,
+  notes text
+);
+
+-- FERTILITY DATA
+create table if not exists public.fertility_data (
+  id uuid primary key default uuid_generate_v4(),
+  patient_id uuid references public.profiles(id) not null,
+  date date not null,
+  bbt_temp numeric(4,1),
+  opk_result text check (opk_result in ('negative', 'high', 'peak')),
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+
+alter table public.fertility_data add column if not exists patient_id uuid references public.profiles(id);
+alter table public.fertility_data add column if not exists date date;
+alter table public.fertility_data add column if not exists bbt_temp numeric(4,1);
+alter table public.fertility_data add column if not exists opk_result text;
+alter table public.fertility_data add column if not exists created_at timestamptz default now();
+alter table public.fertility_data add column if not exists updated_at timestamptz default now();
+create unique index if not exists fertility_data_patient_date_unique on public.fertility_data (patient_id, date);
+-- MESSAGES
+create table if not exists public.messages (
+  id uuid primary key default uuid_generate_v4(),
+  conversation_id uuid references public.conversations(id) not null,
+  sender_id uuid references public.profiles(id),
+  content text not null,
+  message_type text default 'text',
+  attachment_path text,
+  attachment_name text,
+  read_at timestamptz,
+  created_at timestamptz default now()
+);
+
+alter table public.messages add column if not exists attachment_path text;
+alter table public.messages add column if not exists attachment_name text;
+
+-- CARE PLANS
+create table if not exists public.care_plans (
+  id uuid primary key default uuid_generate_v4(),
+  patient_id uuid references public.profiles(id),
+  provider_id uuid references public.providers(id),
+  title text not null,
+  description text,
+  milestones jsonb default '[]'::jsonb,
+  status text default 'active',
+  created_at timestamptz default now()
+);
+
+-- EMPLOYERS
+create table if not exists public.employers (
+  id uuid primary key default uuid_generate_v4(),
+  company_name text not null,
+  domain text unique,
+  employee_count integer,
+  plan_type text default 'standard',
+  contract_start date,
+  contract_end date
+);
+
+-- INVITATIONS
+create table if not exists public.invitations (
+  id uuid primary key default uuid_generate_v4(),
+  email text not null,
+  role text check (role in ('provider', 'employer_admin')),
+  token text unique default encode(gen_random_bytes(32), 'hex'),
+  accepted boolean default false,
+  expires_at timestamptz default now() + interval '7 days',
+  created_at timestamptz default now()
+);
+
+-- NOTIFICATIONS
+create table if not exists public.notifications (
+  id uuid primary key default uuid_generate_v4(),
+  recipient_id uuid references public.profiles(id) not null,
+  actor_id uuid references public.profiles(id),
+  appointment_id uuid references public.appointments(id),
+  type text not null,
+  title text not null,
+  body text not null,
+  link text,
+  read_at timestamptz,
+  created_at timestamptz default now()
+);
+
+alter table public.notifications add column if not exists recipient_id uuid references public.profiles(id);
+alter table public.notifications add column if not exists actor_id uuid references public.profiles(id);
+alter table public.notifications add column if not exists appointment_id uuid references public.appointments(id);
+alter table public.notifications add column if not exists type text;
+alter table public.notifications add column if not exists title text;
+alter table public.notifications add column if not exists body text;
+alter table public.notifications add column if not exists link text;
+alter table public.notifications add column if not exists read_at timestamptz;
+alter table public.notifications add column if not exists created_at timestamptz default now();
+
+-- RLS POLICIES
+alter table public.profiles enable row level security;
+alter table public.symptom_logs enable row level security;
+alter table public.cycle_logs enable row level security;
+alter table public.appointments enable row level security;
+alter table public.messages enable row level security;
+alter table public.conversations enable row level security;
+alter table public.notifications enable row level security;
+alter table public.invitations enable row level security;
+alter table public.provider_availability enable row level security;
+
+drop policy if exists "Users read own profile" on public.profiles;
+create policy "Users read own profile" on public.profiles for select using (auth.uid() = id);
+
+drop policy if exists "Users update own profile" on public.profiles;
+create policy "Users update own profile" on public.profiles for update using (auth.uid() = id);
+
+drop policy if exists "Patients own symptom logs" on public.symptom_logs;
+create policy "Patients own symptom logs" on public.symptom_logs for all using (auth.uid() = patient_id);
+
+drop policy if exists "Patients own cycle logs" on public.cycle_logs;
+create policy "Patients own cycle logs" on public.cycle_logs for all using (auth.uid() = patient_id);
+
+drop policy if exists "Patients manage own appointments" on public.appointments;
+create policy "Patients manage own appointments" on public.appointments for all using (auth.uid() = patient_id) with check (auth.uid() = patient_id);
+
+drop policy if exists "Providers read assigned appointments" on public.appointments;
+create policy "Providers read assigned appointments" on public.appointments for select using (
+  exists (
+    select 1
+    from public.providers own_provider
+    where own_provider.id = appointments.provider_id
+      and own_provider.profile_id = auth.uid()
+  )
+);
+
+drop policy if exists "Users read provider profiles" on public.profiles;
+create policy "Users read provider profiles" on public.profiles for select using (
+  exists (
+    select 1 from public.providers provider_profile
+    where provider_profile.profile_id = profiles.id
+  )
+);
+
+drop policy if exists "Providers read assigned patient profiles" on public.profiles;
+create policy "Providers read assigned patient profiles" on public.profiles for select using (
+  exists (
+    select 1
+    from public.providers own_provider
+    join public.appointments appointment on appointment.provider_id = own_provider.id
+    where own_provider.profile_id = auth.uid()
+      and appointment.patient_id = profiles.id
+  )
+);
+
+drop policy if exists "Providers manage own availability" on public.provider_availability;
+create policy "Providers manage own availability" on public.provider_availability for all using (
+  exists (
+    select 1 from public.providers own_provider
+    where own_provider.id = provider_availability.provider_id
+      and own_provider.profile_id = auth.uid()
+  )
+);
+
+drop policy if exists "Conversation participants only" on public.conversations;
+create policy "Conversation participants only" on public.conversations for select using (
+  auth.uid() = patient_id or auth.uid() = provider_profile_id
+);
+
+drop policy if exists "Conversation participants insert" on public.conversations;
+create policy "Conversation participants insert" on public.conversations for insert with check (
+  auth.uid() = patient_id or auth.uid() = provider_profile_id
+);
+
+drop policy if exists "Message participants only" on public.messages;
+create policy "Message participants only" on public.messages for all using (
+  auth.uid() = sender_id
+  or exists (
+    select 1
+    from public.conversations conversation
+    where conversation.id = messages.conversation_id
+      and (conversation.patient_id = auth.uid() or conversation.provider_profile_id = auth.uid())
+  )
+) with check (
+  auth.uid() = sender_id
+  or exists (
+    select 1
+    from public.conversations conversation
+    where conversation.id = messages.conversation_id
+      and (conversation.patient_id = auth.uid() or conversation.provider_profile_id = auth.uid())
+  )
+);
+
+insert into storage.buckets (id, name, public)
+values ('message-attachments', 'message-attachments', false)
+on conflict (id) do nothing;
+
+drop policy if exists "Authenticated users upload message attachments" on storage.objects;
+create policy "Authenticated users upload message attachments" on storage.objects for insert with check (
+  bucket_id = 'message-attachments' and auth.role() = 'authenticated'
+);
+
+drop policy if exists "Authenticated users read message attachments" on storage.objects;
+create policy "Authenticated users read message attachments" on storage.objects for select using (
+  bucket_id = 'message-attachments' and auth.role() = 'authenticated'
+);
+
+drop policy if exists "Authenticated users update message attachments" on storage.objects;
+create policy "Authenticated users update message attachments" on storage.objects for update using (
+  bucket_id = 'message-attachments' and auth.role() = 'authenticated'
+) with check (
+  bucket_id = 'message-attachments' and auth.role() = 'authenticated'
+);
+drop policy if exists "Users read own notifications" on public.notifications;
+create policy "Users read own notifications" on public.notifications for select using (auth.uid() = recipient_id);
+
+drop policy if exists "Users update own notifications" on public.notifications;
+create policy "Users update own notifications" on public.notifications for update using (auth.uid() = recipient_id);
+
+drop policy if exists "Actors create notifications" on public.notifications;
+create policy "Actors create notifications" on public.notifications for insert with check (auth.uid() = actor_id);

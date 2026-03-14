@@ -1,6 +1,6 @@
 # Maven Clinic
 
-Next.js 16 starter workspace with TypeScript, Tailwind CSS v4, and a basic Supabase client helper.
+Next.js 16 starter workspace for the Maven Clinic hackathon MVP. The app includes patient onboarding, dashboard flows, symptom tracking with AI insight hooks, appointment booking, secure messaging, provider views, and employer analytics.
 
 ## Setup
 
@@ -16,12 +16,15 @@ npm install
 Copy-Item .env.example .env.local
 ```
 
-3. Fill in your Supabase values in `.env.local`:
+3. Fill in `.env.local`:
 
 - `NEXT_PUBLIC_SUPABASE_URL`
 - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+- `SUPABASE_SERVICE_ROLE_KEY`
+- `ANTHROPIC_API_KEY` (optional fallback-safe)
+- `NEXT_PUBLIC_APP_URL`
 
-4. Start the development server:
+4. Run the app:
 
 ```bash
 npm run dev
@@ -33,25 +36,24 @@ npm run dev
 - `npm run build` creates a production build.
 - `npm run start` runs the production server.
 - `npm run lint` runs ESLint.
-
-## Project Structure
-
-```text
-src/
-  app/            App Router entrypoints and route UI
-  lib/            Shared helpers and integrations
-public/           Static assets
-```
+- `npm run seed` seeds provider and employer demo data into Supabase.
 
 ## Supabase
 
-- Environment parsing lives in `src/lib/env.ts`.
-- Browser client creation lives in `src/lib/supabase/client.ts`.
-- The client helper throws early if required environment variables are missing.
+- Run [schema.sql](D:\Maven Clinic\supabase\schema.sql) in the Supabase SQL editor first.
+- Then run `npm run seed`.
+- The seed script loads `.env.local` and requires `SUPABASE_SERVICE_ROLE_KEY`.
 
-## Suggested Next Work
+## Key Paths
 
-- Replace `src/app/page.tsx` with the first real feature route.
-- Add feature folders under `src/` as product areas become clear.
-- Introduce server-side Supabase helpers if you need authenticated server rendering or route handlers.
-# Maven-Clinic
+- `src/app/(auth)` for auth and onboarding routes.
+- `src/app/(dashboard)` for patient flows.
+- `src/app/(provider)` for provider surfaces.
+- `src/app/(employer)` for employer analytics.
+- `src/lib/data.ts` for live-first data access with mock fallbacks.
+- `src/lib/supabase` for browser/server/middleware Supabase helpers.
+
+## Notes
+
+- Anthropic integration falls back to a safe canned insight when `ANTHROPIC_API_KEY` is missing.
+- Patient data pages prefer live Supabase reads and degrade to mock data only when tables or rows are unavailable.
