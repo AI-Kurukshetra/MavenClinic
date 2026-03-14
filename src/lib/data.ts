@@ -1,6 +1,7 @@
 import { addDays, differenceInCalendarDays, endOfDay, startOfDay, subDays } from "date-fns";
 import { getCurrentProfile, getCurrentUser } from "@/lib/auth";
 import { generateAiInsight } from "@/lib/ai";
+import { formatAvailabilityDay } from "@/lib/appointments";
 import {
   mockAppointments,
   mockCycleLogs,
@@ -626,7 +627,7 @@ export async function getProviderDashboardData() {
       .eq("provider_profile_id", userId),
     supabase
       .from("provider_availability")
-      .select("id, day_of_week, start_time, end_time, location")
+      .select("id, day_of_week, start_time, end_time")
       .eq("provider_id", providerId)
       .order("day_of_week", { ascending: true })
       .order("start_time", { ascending: true }),
@@ -707,10 +708,10 @@ export async function getProviderDashboardData() {
 
   const availability: ProviderAvailabilitySlot[] = (availabilityResult.data ?? []).map((slot) => ({
     id: slot.id,
-    dayOfWeek: slot.day_of_week,
+    dayOfWeek: formatAvailabilityDay(slot.day_of_week),
     startTime: slot.start_time,
     endTime: slot.end_time,
-    location: slot.location ?? "Virtual",
+    location: "Virtual",
   }));
 
   const stats: ProviderDashboardStats = {
@@ -1134,7 +1135,7 @@ export async function getClinicDashboardData() {
         status: acceptingPatients ? "Active and accepting" : "Active, not accepting",
         submittedAt: formatDashboardDate(profile?.created_at),
         action: acceptingPatients
-          ? `${Number(provider.total_reviews ?? 0)} reviews Â· ${Number(provider.rating ?? 5).toFixed(1)} rating`
+          ? `${Number(provider.total_reviews ?? 0)} reviews · ${Number(provider.rating ?? 5).toFixed(1)} rating`
           : "Review panel access",
       };
     })
@@ -1223,5 +1224,3 @@ export async function getClinicDashboardData() {
     notifications: notificationItems,
   };
 }
-
-

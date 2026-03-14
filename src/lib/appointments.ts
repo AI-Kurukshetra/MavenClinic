@@ -75,10 +75,10 @@ export type AppointmentMutationValues = z.infer<typeof appointmentMutationSchema
 
 export type AvailabilityRow = {
   id: string;
-  day_of_week: string;
+  day_of_week: string | number;
   start_time: string;
   end_time: string;
-  location: string | null;
+  location?: string | null;
 };
 
 export type BookedAppointmentRow = {
@@ -119,6 +119,8 @@ const dayIndexMap: Record<string, number> = {
   sat: 6,
 };
 
+const weekdayLabels = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"] as const;
+
 function parseTime(value: string) {
   const [hoursValue, minutesValue] = value.split(":");
   return {
@@ -137,6 +139,27 @@ function formatDateLabel(date: Date) {
 
 function formatTimeLabel(date: Date) {
   return new Intl.DateTimeFormat("en-US", { hour: "numeric", minute: "2-digit" }).format(date);
+}
+
+function resolveDayIndex(value: string | number) {
+  if (typeof value === "number") {
+    if (value >= 0 && value <= 6) {
+      return value;
+    }
+
+    if (value >= 1 && value <= 7) {
+      return value % 7;
+    }
+
+    return null;
+  }
+
+  return dayIndexMap[value.toLowerCase()] ?? null;
+}
+
+export function formatAvailabilityDay(value: string | number) {
+  const index = resolveDayIndex(value);
+  return index === null ? String(value) : weekdayLabels[index];
 }
 
 export function getSpecialtyLabel(value: string) {
@@ -179,7 +202,7 @@ export function buildAvailabilityByDate(
 
   for (let offset = 0; offset < days; offset += 1) {
     const day = addDays(today, offset);
-    const matchingWindows = availability.filter((slot) => dayIndexMap[slot.day_of_week.toLowerCase()] === day.getDay());
+    const matchingWindows = availability.filter((slot) => resolveDayIndex(slot.day_of_week) === day.getDay());
 
     const slots: GeneratedSlot[] = [];
 

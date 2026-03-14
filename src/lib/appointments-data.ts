@@ -162,7 +162,7 @@ export async function getAppointmentsPageData(): Promise<AppointmentsPageData> {
     allProviderIds.length
       ? supabase
           .from("provider_availability")
-          .select("id, provider_id, day_of_week, start_time, end_time, location")
+          .select("id, provider_id, day_of_week, start_time, end_time")
           .in("provider_id", allProviderIds)
       : Promise.resolve({ data: [] as Array<AvailabilityRow & { provider_id: string }>, error: null }),
     allProviderIds.length
@@ -268,7 +268,7 @@ export async function getAvailableSlotsForProvider(providerId: string, excludedA
   const [availabilityResult, bookedAppointmentsResult] = await Promise.all([
     supabase
       .from("provider_availability")
-      .select("id, day_of_week, start_time, end_time, location")
+      .select("id, day_of_week, start_time, end_time")
       .eq("provider_id", providerId),
     supabase
       .from("appointments")

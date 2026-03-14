@@ -23,7 +23,7 @@ type FertilityDataRow = {
   id: string;
   date: string;
   bbt_temp: number | null;
-  opk_result: OpkResult | null;
+  opk_result?: OpkResult | null;
 };
 
 export type FertilityEntry = {
@@ -71,6 +71,41 @@ function mapFertilityRow(row: FertilityDataRow | null): FertilityEntry | null {
   };
 }
 
+function isMissingColumnError(error: { message?: string } | null, columnName: string) {
+  return Boolean(error?.message?.includes(`Could not find the '${columnName}' column`));
+}
+
+async function getTodayFertilityEntry(userId: string, today: string) {
+  const supabase = await getSupabaseServerClient();
+  const primaryResult = await supabase
+    .from("fertility_data")
+    .select("id, date, bbt_temp, opk_result")
+    .eq("patient_id", userId)
+    .eq("date", today)
+    .maybeSingle();
+
+  if (!isMissingColumnError(primaryResult.error, "opk_result")) {
+    if (primaryResult.error) {
+      throw new Error(primaryResult.error.message);
+    }
+
+    return primaryResult.data as FertilityDataRow | null;
+  }
+
+  const fallbackResult = await supabase
+    .from("fertility_data")
+    .select("id, date, bbt_temp")
+    .eq("patient_id", userId)
+    .eq("date", today)
+    .maybeSingle();
+
+  if (fallbackResult.error) {
+    throw new Error(fallbackResult.error.message);
+  }
+
+  return (fallbackResult.data ? { ...fallbackResult.data, opk_result: null } : null) as FertilityDataRow | null;
+}
+
 export async function getCycleTrackerData() {
   const user = await getCurrentUser();
 
@@ -81,31 +116,21 @@ export async function getCycleTrackerData() {
   const supabase = await getSupabaseServerClient();
   const today = format(startOfDay(new Date()), "yyyy-MM-dd");
 
-  const [{ data: logs, error: logsError }, { data: fertilityEntry, error: fertilityError }] = await Promise.all([
-    supabase
-      .from("cycle_logs")
-      .select("id, period_start, period_end, cycle_length, flow_intensity, symptoms, ovulation_date, fertile_window_start, fertile_window_end, notes")
-      .eq("patient_id", user.id)
-      .order("period_start", { ascending: true }),
-    supabase
-      .from("fertility_data")
-      .select("id, date, bbt_temp, opk_result")
-      .eq("patient_id", user.id)
-      .eq("date", today)
-      .maybeSingle(),
-  ]);
+  const { data: logs, error: logsError } = await supabase
+    .from("cycle_logs")
+    .select("id, period_start, period_end, cycle_length, flow_intensity, symptoms, ovulation_date, fertile_window_start, fertile_window_end, notes")
+    .eq("patient_id", user.id)
+    .order("period_start", { ascending: true });
 
   if (logsError) {
     throw new Error(logsError.message);
   }
 
-  if (fertilityError) {
-    throw new Error(fertilityError.message);
-  }
+  const fertilityEntry = await getTodayFertilityEntry(user.id, today);
 
   return {
     logs: (logs ?? []).map((log) => mapCycleLogRow(log as CycleLogRow)),
-    fertilityEntry: mapFertilityRow(fertilityEntry as FertilityDataRow | null),
+    fertilityEntry: mapFertilityRow(fertilityEntry),
   };
 }
 
@@ -164,14 +189,17 @@ export async function saveTodayFertilityDataForCurrentUser(input: FertilitySnaps
 
   const supabase = await getSupabaseServerClient();
   const today = format(startOfDay(new Date()), "yyyy-MM-dd");
+  const basePayload = {
+    patient_id: user.id,
+    date: today,
+    bbt_temp: typeof input.bbtTemp === "number" ? input.bbtTemp : null,
+  };
 
-  const { data, error } = await supabase
+  const primaryResult = await supabase
     .from("fertility_data")
     .upsert(
       {
-        patient_id: user.id,
-        date: today,
-        bbt_temp: typeof input.bbtTemp === "number" ? input.bbtTemp : null,
+        ...basePayload,
         opk_result: input.opkResult ?? null,
       },
       { onConflict: "patient_id,date" },
@@ -179,9 +207,23 @@ export async function saveTodayFertilityDataForCurrentUser(input: FertilitySnaps
     .select("id, date, bbt_temp, opk_result")
     .single();
 
-  if (error) {
-    throw new Error(error.message);
+  if (!isMissingColumnError(primaryResult.error, "opk_result")) {
+    if (primaryResult.error) {
+      throw new Error(primaryResult.error.message);
+    }
+
+    return mapFertilityRow(primaryResult.data as FertilityDataRow) ?? { date: today };
   }
 
-  return mapFertilityRow(data as FertilityDataRow) ?? { date: today };
+  const fallbackResult = await supabase
+    .from("fertility_data")
+    .upsert(basePayload, { onConflict: "patient_id,date" })
+    .select("id, date, bbt_temp")
+    .single();
+
+  if (fallbackResult.error) {
+    throw new Error(fallbackResult.error.message);
+  }
+
+  return mapFertilityRow({ ...(fallbackResult.data as FertilityDataRow), opk_result: null }) ?? { date: today };
 }
