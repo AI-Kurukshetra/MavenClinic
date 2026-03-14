@@ -5,13 +5,13 @@ import {
   mockAppointments,
   mockCycleLogs,
   mockEducation,
-  mockEmployerMetrics,
   mockMessages,
   mockProfile,
   mockProviders,
   mockRecords,
   mockSymptomLogs,
 } from "@/lib/mock-data";
+import { getSupabaseAdminClient } from "@/lib/supabase/admin";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 import type { Appointment, CycleLog, MessageThread, Provider, SymptomLog } from "@/types/domain";
 
@@ -157,6 +157,7 @@ function mapSymptomLogRow(log: {
   mood: number | null;
   energy: number | null;
   pain_level: number | null;
+  sleep_hours: number | null;
   notes: string | null;
   ai_insight: string | null;
 }): SymptomLog {
@@ -167,6 +168,7 @@ function mapSymptomLogRow(log: {
     mood: log.mood ?? 0,
     energy: log.energy ?? 0,
     painLevel: log.pain_level ?? 0,
+    sleepHours: typeof log.sleep_hours === "number" ? log.sleep_hours : undefined,
     notes: log.notes ?? undefined,
     aiInsight: log.ai_insight ?? undefined,
   };
@@ -385,7 +387,7 @@ export async function getPatientDashboardData() {
       .maybeSingle(),
     supabase
       .from("symptom_logs")
-      .select("id, logged_at, symptoms, mood, energy, pain_level, notes, ai_insight")
+      .select("id, logged_at, symptoms, mood, energy, pain_level, sleep_hours, notes, ai_insight")
       .eq("patient_id", user.id)
       .gte("logged_at", symptomWindowStart)
       .order("logged_at", { ascending: true }),
@@ -457,19 +459,16 @@ export async function getPatientDashboardData() {
 
   const symptomLogs = (symptomLogsResult.data ?? []).map(mapSymptomLogRow);
   const latestSymptomLog = symptomLogs.at(-1) ?? null;
-  const aiInsight = symptomLogs.length
-    ? await generateAiInsight(
-        "symptom_insight",
-        symptomLogs.map((log) => ({
-          loggedAt: log.loggedAt,
-          symptoms: log.symptoms,
-          mood: log.mood,
-          energy: log.energy,
-          painLevel: log.painLevel,
-          notes: log.notes,
-        })),
-      )
-    : null;
+  const insightPayload = symptomLogs.map((log) => ({
+    loggedAt: log.loggedAt,
+    symptoms: log.symptoms,
+    mood: log.mood,
+    energy: log.energy,
+    painLevel: log.painLevel,
+    sleepHours: log.sleepHours,
+    notes: log.notes,
+  }));
+  const aiInsight = latestSymptomLog?.aiInsight ?? (insightPayload.length ? await generateAiInsight("symptom_insight", insightPayload) : null);
 
   return {
     profile,
@@ -477,6 +476,7 @@ export async function getPatientDashboardData() {
     cycleSummary,
     latestSymptomLog,
     aiInsight,
+    insightPayload,
     carePlan: parseCarePlan(carePlanResult.data),
     messages,
   };
@@ -727,32 +727,501 @@ export async function getProviderDashboardData() {
   };
 }
 
+function getMonthBuckets(count: number) {
+  const now = new Date();
+
+  return Array.from({ length: count }, (_, index) => {
+    const date = new Date(now.getFullYear(), now.getMonth() - (count - index - 1), 1);
+    return {
+      label: date.toLocaleString("en-US", { month: "short" }),
+      start: date,
+      end: new Date(date.getFullYear(), date.getMonth() + 1, 1),
+      members: new Set<string>(),
+    };
+  });
+}
+
+function formatDashboardDate(value?: string | null) {
+  if (!value) {
+    return "Unknown";
+  }
+
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+  }).format(new Date(value));
+}
+
+function formatDashboardDateTime(value?: string | null) {
+  if (!value) {
+    return "Unknown";
+  }
+
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(new Date(value));
+}
+
+function getNotificationSeverity(type?: string | null) {
+  const normalized = type?.toLowerCase() ?? "";
+
+  if (["suspend", "cancel", "escalat", "urgent"].some((keyword) => normalized.includes(keyword))) {
+    return "High";
+  }
+
+  if (["invite", "appointment", "message", "review"].some((keyword) => normalized.includes(keyword))) {
+    return "Medium";
+  }
+
+  return "Low";
+}
+
+function isExpired(value?: string | null) {
+  return Boolean(value && new Date(value).getTime() < Date.now());
+}
+
 export async function getEmployerAnalyticsData() {
-  return mockEmployerMetrics;
+  const user = await getCurrentUser();
+
+  if (!user) {
+    throw new Error("Authenticated employer admin required.");
+  }
+
+  const supabase = await getSupabaseServerClient();
+  const buckets = getMonthBuckets(6);
+  const emptyData = {
+    stats: {
+      coveredEmployees: 0,
+      monthlyActiveUsers: 0,
+      completionRate: 0,
+      activeCarePlans: 0,
+      employerName: "Employer",
+      planType: "No plan",
+      contractEnd: null as string | null,
+    },
+    mau: buckets.map((bucket) => ({ month: bucket.label, users: 0 })),
+    categories: [] as Array<{ name: string; value: number }>,
+  };
+
+  const { data: profile, error: profileError } = await supabase
+    .from("profiles")
+    .select("employer_id")
+    .eq("id", user.id)
+    .maybeSingle();
+
+  if (profileError) {
+    throw new Error(profileError.message);
+  }
+
+  if (!profile?.employer_id) {
+    return emptyData;
+  }
+
+  const admin = (() => {
+    try {
+      return getSupabaseAdminClient();
+    } catch {
+      return null;
+    }
+  })();
+
+  if (!admin) {
+    return emptyData;
+  }
+
+  const [employerResult, employeesResult] = await Promise.all([
+    admin
+      .from("employers")
+      .select("id, company_name, employee_count, plan_type, contract_end")
+      .eq("id", profile.employer_id)
+      .maybeSingle(),
+    admin
+      .from("profiles")
+      .select("id")
+      .eq("employer_id", profile.employer_id)
+      .eq("role", "patient"),
+  ]);
+
+  if (employerResult.error) {
+    throw new Error(employerResult.error.message);
+  }
+
+  if (employeesResult.error) {
+    throw new Error(employeesResult.error.message);
+  }
+
+  const employer = employerResult.data as {
+    company_name: string;
+    employee_count: number | null;
+    plan_type: string | null;
+    contract_end: string | null;
+  } | null;
+  const employeeIds = ((employeesResult.data ?? []) as Array<{ id: string }>).map((employee) => employee.id);
+  const coveredEmployees = employeeIds.length || employer?.employee_count || 0;
+
+  if (!employeeIds.length) {
+    return {
+      ...emptyData,
+      stats: {
+        ...emptyData.stats,
+        coveredEmployees,
+        employerName: employer?.company_name ?? "Employer",
+        planType: employer?.plan_type ?? "standard",
+        contractEnd: employer?.contract_end ?? null,
+      },
+    };
+  }
+
+  const [appointmentsResult, carePlansResult, conversationsResult] = await Promise.all([
+    admin
+      .from("appointments")
+      .select("patient_id, provider_id, status, scheduled_at")
+      .in("patient_id", employeeIds),
+    admin
+      .from("care_plans")
+      .select("patient_id, status")
+      .in("patient_id", employeeIds),
+    admin
+      .from("conversations")
+      .select("id, patient_id, created_at")
+      .in("patient_id", employeeIds),
+  ]);
+
+  if (appointmentsResult.error) {
+    throw new Error(appointmentsResult.error.message);
+  }
+
+  if (carePlansResult.error) {
+    throw new Error(carePlansResult.error.message);
+  }
+
+  if (conversationsResult.error) {
+    throw new Error(conversationsResult.error.message);
+  }
+
+  const appointments = (appointmentsResult.data ?? []) as Array<{
+    patient_id: string;
+    provider_id: string | null;
+    status: Appointment["status"];
+    scheduled_at: string;
+  }>;
+  const carePlans = (carePlansResult.data ?? []) as Array<{ patient_id: string; status: string | null }>;
+  const conversations = (conversationsResult.data ?? []) as Array<{ id: string; patient_id: string; created_at: string | null }>;
+
+  const providerIds = Array.from(new Set(appointments.map((appointment) => appointment.provider_id).filter((value): value is string => Boolean(value))));
+  const providersResult = providerIds.length
+    ? await admin.from("providers").select("id, specialty").in("id", providerIds)
+    : { data: [] as Array<{ id: string; specialty: string }>, error: null };
+
+  if (providersResult.error) {
+    throw new Error(providersResult.error.message);
+  }
+
+  for (const appointment of appointments) {
+    const value = new Date(appointment.scheduled_at);
+    const bucket = buckets.find((entry) => value >= entry.start && value < entry.end);
+    if (bucket) {
+      bucket.members.add(appointment.patient_id);
+    }
+  }
+
+  for (const conversation of conversations) {
+    if (!conversation.created_at) {
+      continue;
+    }
+
+    const value = new Date(conversation.created_at);
+    const bucket = buckets.find((entry) => value >= entry.start && value < entry.end);
+    if (bucket) {
+      bucket.members.add(conversation.patient_id);
+    }
+  }
+
+  const activeCarePlans = new Set(
+    carePlans.filter((plan) => (plan.status ?? "active") === "active").map((plan) => plan.patient_id),
+  ).size;
+  const eligibleAppointments = appointments.filter((appointment) => appointment.status !== "cancelled" && appointment.status !== "no_show");
+  const completedAppointments = eligibleAppointments.filter((appointment) => appointment.status === "completed").length;
+  const completionRate = eligibleAppointments.length ? Math.round((completedAppointments / eligibleAppointments.length) * 100) : 0;
+  const specialtyMap = new Map(
+    ((providersResult.data ?? []) as Array<{ id: string; specialty: string }>).map((provider) => [provider.id, formatProviderSpecialtyLabel(provider.specialty)]),
+  );
+  const categoryCounts = new Map<string, number>();
+
+  for (const appointment of appointments) {
+    const label = appointment.provider_id ? specialtyMap.get(appointment.provider_id) ?? "General" : "General";
+    categoryCounts.set(label, (categoryCounts.get(label) ?? 0) + 1);
+  }
+
+  const mau = buckets.map((bucket) => ({ month: bucket.label, users: bucket.members.size }));
+
+  return {
+    stats: {
+      coveredEmployees,
+      monthlyActiveUsers: mau.at(-1)?.users ?? 0,
+      completionRate,
+      activeCarePlans,
+      employerName: employer?.company_name ?? "Employer",
+      planType: employer?.plan_type ?? "standard",
+      contractEnd: employer?.contract_end ?? null,
+    },
+    mau,
+    categories: Array.from(categoryCounts.entries())
+      .map(([name, value]) => ({ name, value }))
+      .sort((left, right) => right.value - left.value)
+      .slice(0, 5),
+  };
 }
 
 export async function getClinicDashboardData() {
+  const emptyData = {
+    stats: {
+      activeProviders: 0,
+      pendingInvites: 0,
+      openConversations: 0,
+      recentNotifications: 0,
+    },
+    providerManagement: [] as Array<{
+      id: string;
+      name: string;
+      specialty: string;
+      status: string;
+      submittedAt: string;
+      action: string;
+    }>,
+    invitationQueue: [] as Array<{
+      id: string;
+      email: string;
+      status: string;
+      createdAt: string;
+      expiresAt: string;
+    }>,
+    conversationLoad: [] as Array<{
+      id: string;
+      providerName: string;
+      openThreads: number;
+      unreadMessages: number;
+      lastActivity: string;
+    }>,
+    notifications: [] as Array<{
+      id: string;
+      event: string;
+      actor: string;
+      timestamp: string;
+      severity: string;
+    }>,
+  };
+
+  const admin = (() => {
+    try {
+      return getSupabaseAdminClient();
+    } catch {
+      return null;
+    }
+  })();
+
+  if (!admin) {
+    return emptyData;
+  }
+
+  const [providersResult, invitationsResult, conversationsResult, notificationsResult] = await Promise.all([
+    admin
+      .from("providers")
+      .select("id, profile_id, specialty, accepting_patients, rating, total_reviews"),
+    admin
+      .from("invitations")
+      .select("id, email, accepted, expires_at, created_at")
+      .eq("role", "provider")
+      .order("created_at", { ascending: false })
+      .limit(8),
+    admin
+      .from("conversations")
+      .select("id, provider_profile_id, created_at")
+      .order("created_at", { ascending: false }),
+    admin
+      .from("notifications")
+      .select("id, type, title, created_at, actor_id")
+      .order("created_at", { ascending: false })
+      .limit(12),
+  ]);
+
+  if (providersResult.error) {
+    throw new Error(providersResult.error.message);
+  }
+
+  if (invitationsResult.error) {
+    throw new Error(invitationsResult.error.message);
+  }
+
+  if (conversationsResult.error) {
+    throw new Error(conversationsResult.error.message);
+  }
+
+  if (notificationsResult.error) {
+    throw new Error(notificationsResult.error.message);
+  }
+
+  const providers = (providersResult.data ?? []) as Array<{
+    id: string;
+    profile_id: string | null;
+    specialty: string;
+    accepting_patients: boolean | null;
+    rating: number | null;
+    total_reviews: number | null;
+  }>;
+  const invitations = (invitationsResult.data ?? []) as Array<{
+    id: string;
+    email: string;
+    accepted: boolean | null;
+    expires_at: string | null;
+    created_at: string | null;
+  }>;
+  const conversations = (conversationsResult.data ?? []) as Array<{
+    id: string;
+    provider_profile_id: string | null;
+    created_at: string | null;
+  }>;
+  const notifications = (notificationsResult.data ?? []) as Array<{
+    id: string;
+    type: string | null;
+    title: string;
+    created_at: string | null;
+    actor_id: string | null;
+  }>;
+
+  const providerProfileIds = Array.from(new Set(providers.map((provider) => provider.profile_id).filter((value): value is string => Boolean(value))));
+  const actorIds = Array.from(new Set(notifications.map((item) => item.actor_id).filter((value): value is string => Boolean(value))));
+  const profileIds = Array.from(new Set([...providerProfileIds, ...actorIds]));
+  const conversationIds = conversations.map((conversation) => conversation.id);
+
+  const [profilesResult, messagesResult] = await Promise.all([
+    profileIds.length
+      ? admin.from("profiles").select("id, full_name, created_at").in("id", profileIds)
+      : Promise.resolve({ data: [] as Array<{ id: string; full_name: string | null; created_at: string | null }>, error: null }),
+    conversationIds.length
+      ? admin.from("messages").select("conversation_id, sender_id, read_at, created_at").in("conversation_id", conversationIds)
+      : Promise.resolve({ data: [] as Array<{ conversation_id: string; sender_id: string | null; read_at: string | null; created_at: string | null }>, error: null }),
+  ]);
+
+  if (profilesResult.error) {
+    throw new Error(profilesResult.error.message);
+  }
+
+  if (messagesResult.error) {
+    throw new Error(messagesResult.error.message);
+  }
+
+  const profiles = (profilesResult.data ?? []) as Array<{ id: string; full_name: string | null; created_at: string | null }>;
+  const messages = (messagesResult.data ?? []) as Array<{
+    conversation_id: string;
+    sender_id: string | null;
+    read_at: string | null;
+    created_at: string | null;
+  }>;
+  const profileMap = new Map(profiles.map((profile) => [profile.id, profile]));
+
+  const providerManagement = providers
+    .map((provider) => {
+      const profile = provider.profile_id ? profileMap.get(provider.profile_id) : undefined;
+      const acceptingPatients = provider.accepting_patients ?? true;
+      return {
+        id: provider.id,
+        name: profile?.full_name ?? `${formatProviderSpecialtyLabel(provider.specialty)} specialist`,
+        specialty: formatProviderSpecialtyLabel(provider.specialty),
+        status: acceptingPatients ? "Active and accepting" : "Active, not accepting",
+        submittedAt: formatDashboardDate(profile?.created_at),
+        action: acceptingPatients
+          ? `${Number(provider.total_reviews ?? 0)} reviews Â· ${Number(provider.rating ?? 5).toFixed(1)} rating`
+          : "Review panel access",
+      };
+    })
+    .sort((left, right) => left.name.localeCompare(right.name));
+
+  const invitationQueue = invitations.map((invitation) => {
+    const pending = !invitation.accepted && !isExpired(invitation.expires_at);
+    return {
+      id: invitation.id,
+      email: invitation.email,
+      status: invitation.accepted ? "Accepted" : pending ? "Pending" : "Expired",
+      createdAt: formatDashboardDate(invitation.created_at),
+      expiresAt: formatDashboardDate(invitation.expires_at),
+    };
+  });
+
+  const conversationsById = new Map(conversations.map((conversation) => [conversation.id, conversation]));
+  const conversationMap = new Map<string, { providerName: string; openThreads: number; unreadMessages: number; lastActivityValue: number }>();
+
+  for (const conversation of conversations) {
+    const providerKey = conversation.provider_profile_id ?? `unassigned-${conversation.id}`;
+    const providerName = conversation.provider_profile_id
+      ? profileMap.get(conversation.provider_profile_id)?.full_name ?? "Assigned provider"
+      : "Unassigned provider";
+    const existing = conversationMap.get(providerKey) ?? {
+      providerName,
+      openThreads: 0,
+      unreadMessages: 0,
+      lastActivityValue: conversation.created_at ? new Date(conversation.created_at).getTime() : 0,
+    };
+    existing.openThreads += 1;
+    existing.lastActivityValue = Math.max(existing.lastActivityValue, conversation.created_at ? new Date(conversation.created_at).getTime() : 0);
+    conversationMap.set(providerKey, existing);
+  }
+
+  for (const message of messages) {
+    const conversation = conversationsById.get(message.conversation_id);
+    if (!conversation) {
+      continue;
+    }
+
+    const providerKey = conversation.provider_profile_id ?? `unassigned-${conversation.id}`;
+    const existing = conversationMap.get(providerKey);
+
+    if (!existing) {
+      continue;
+    }
+
+    const messageTimestamp = message.created_at ? new Date(message.created_at).getTime() : 0;
+    existing.lastActivityValue = Math.max(existing.lastActivityValue, messageTimestamp);
+
+    if (message.sender_id !== conversation.provider_profile_id && !message.read_at) {
+      existing.unreadMessages += 1;
+    }
+  }
+
+  const conversationLoad = Array.from(conversationMap.entries())
+    .map(([id, item]) => ({
+      id,
+      providerName: item.providerName,
+      openThreads: item.openThreads,
+      unreadMessages: item.unreadMessages,
+      lastActivity: item.lastActivityValue ? formatDashboardDateTime(new Date(item.lastActivityValue).toISOString()) : "No activity yet",
+    }))
+    .sort((left, right) => right.unreadMessages - left.unreadMessages || right.openThreads - left.openThreads)
+    .slice(0, 8);
+
+  const notificationItems = notifications.map((item) => ({
+    id: item.id,
+    event: item.title,
+    actor: item.actor_id ? profileMap.get(item.actor_id)?.full_name ?? "System" : "System",
+    timestamp: formatDashboardDateTime(item.created_at),
+    severity: getNotificationSeverity(item.type),
+  }));
+
   return {
-    providerManagement: [
-      { id: "prov-1", name: "Dr. Sarah Chen", specialty: "OB/GYN", status: "Pending approval", submittedAt: "Mar 12", action: "Approve" },
-      { id: "prov-2", name: "Dr. Amara Osei", specialty: "Fertility", status: "Active", submittedAt: "Mar 3", action: "Suspend" },
-      { id: "prov-3", name: "Dr. Maya Patel", specialty: "Mental Health", status: "Under review", submittedAt: "Mar 14", action: "Review" },
-    ],
-    contentLibrary: [
-      { id: "article-1", title: "Understanding fertility lab basics", audience: "Patients", status: "Published", updatedAt: "2 hours ago" },
-      { id: "article-2", title: "When to escalate menopause symptom reports", audience: "Providers", status: "Draft", updatedAt: "Today" },
-      { id: "article-3", title: "Returning to care after pregnancy loss", audience: "Support groups", status: "Scheduled", updatedAt: "Tomorrow" },
-    ],
-    supportGroups: [
-      { id: "group-1", name: "Trying to Conceive Circle", moderator: "Naomi Ellis", members: 148, status: "Stable" },
-      { id: "group-2", name: "PCOS Peer Support", moderator: "Open assignment", members: 203, status: "Needs moderator" },
-      { id: "group-3", name: "Menopause Transitions", moderator: "Claire Dawson", members: 96, status: "Escalation flagged" },
-    ],
-    compliance: [
-      { id: "audit-1", event: "Provider status changed to active", actor: "Clinic Admin", timestamp: "Mar 14, 10:12 AM", severity: "Low" },
-      { id: "audit-2", event: "Article published to patient library", actor: "Content Lead", timestamp: "Mar 14, 9:05 AM", severity: "Low" },
-      { id: "audit-3", event: "Moderator access reviewed", actor: "Compliance Officer", timestamp: "Mar 13, 6:48 PM", severity: "Medium" },
-      { id: "audit-4", event: "Provider suspension requested", actor: "Clinic Admin", timestamp: "Mar 13, 2:17 PM", severity: "High" },
-    ],
+    stats: {
+      activeProviders: providers.length,
+      pendingInvites: invitationQueue.filter((invitation) => invitation.status === "Pending").length,
+      openConversations: conversations.length,
+      recentNotifications: notifications.filter((item) => item.created_at && new Date(item.created_at).getTime() >= Date.now() - 7 * 24 * 60 * 60 * 1000).length,
+    },
+    providerManagement,
+    invitationQueue,
+    conversationLoad,
+    notifications: notificationItems,
   };
 }
+
+

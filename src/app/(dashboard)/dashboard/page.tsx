@@ -1,14 +1,15 @@
 import Link from "next/link";
 import { Suspense } from "react";
-import { CalendarClock, MessageCircleMore, RefreshCcw, Sparkles, Video } from "lucide-react";
+import { CalendarClock, MessageCircleMore, Video } from "lucide-react";
+import { DashboardInsightCard } from "@/components/health/dashboard-insight-card";
+import { DashboardShell } from "@/components/health/dashboard-shell";
+import { SkeletonCard } from "@/components/health/skeleton-card";
 import { AppointmentCard } from "@/components/ui/appointment-card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Toast } from "@/components/ui/Toast";
 import { Card } from "@/components/ui/card";
 import { ProgressRing } from "@/components/ui/progress-ring";
-import { DashboardShell } from "@/components/health/dashboard-shell";
-import { SkeletonCard } from "@/components/health/skeleton-card";
+import { Toast } from "@/components/ui/Toast";
 import { getPatientDashboardData } from "@/lib/data";
 import { formatDate, formatDateTime, formatRelativeTime } from "@/lib/utils";
 
@@ -24,7 +25,9 @@ async function DashboardContent() {
             <div className="space-y-3">
               <p className="text-sm uppercase tracking-[0.24em] text-[var(--rose-700)]">Good morning, {data.profile.firstName}</p>
               <h2 className="text-3xl font-semibold">Your care team is lined up for the week ahead.</h2>
-              <p className="max-w-2xl text-sm leading-7 text-[var(--foreground-muted)]">Everything important is here: the next visit, your cycle forecast, a fast symptom check-in, and the latest note from your providers.</p>
+              <p className="max-w-2xl text-sm leading-7 text-[var(--foreground-muted)]">
+                Everything important is here: the next visit, your cycle forecast, a fast symptom check-in, and the latest note from your providers.
+              </p>
             </div>
             <Link href="/appointments"><Button variant="secondary">View all appointments</Button></Link>
           </div>
@@ -36,7 +39,9 @@ async function DashboardContent() {
               <div>
                 <p className="text-sm text-[var(--foreground-muted)]">Next appointment</p>
                 <h3 className="mt-1 text-2xl font-semibold">{data.nextAppointment?.providerName ?? "No upcoming appointments"}</h3>
-                <p className="text-sm text-[var(--foreground-muted)]">{data.nextAppointment?.providerSpecialty ?? "Book a visit to see your next care team session here."}</p>
+                <p className="text-sm text-[var(--foreground-muted)]">
+                  {data.nextAppointment?.providerSpecialty ?? "Book a visit to see your next care team session here."}
+                </p>
               </div>
               <div className="rounded-2xl bg-[var(--rose-50)] p-3 text-[var(--rose-700)]"><CalendarClock className="h-5 w-5" /></div>
             </div>
@@ -50,7 +55,9 @@ async function DashboardContent() {
               </>
             ) : (
               <div className="space-y-3">
-                <p className="text-sm text-[var(--foreground-muted)]">Once you have a scheduled visit, this card will show the provider, time, and quick consultation access.</p>
+                <p className="text-sm text-[var(--foreground-muted)]">
+                  Once you have a scheduled visit, this card will show the provider, time, and quick consultation access.
+                </p>
                 <Link href="/appointments"><Button>Book an appointment</Button></Link>
               </div>
             )}
@@ -101,26 +108,11 @@ async function DashboardContent() {
             <Link href="/symptoms"><Button variant="secondary">Open symptom tracker</Button></Link>
           </Card>
 
-          <Card className="space-y-4 bg-[var(--teal-50)]">
-            <div className="flex items-start justify-between">
-              <div>
-                <p className="text-sm text-[var(--teal-700)]">AI health insight</p>
-                <h3 className="mt-1 text-2xl font-semibold">Pattern highlight</h3>
-              </div>
-              <button type="button" className="rounded-full border border-[rgba(23,104,95,0.15)] p-2 text-[var(--teal-700)]"><RefreshCcw className="h-4 w-4" /></button>
-            </div>
-            {data.aiInsight ? (
-              <>
-                <p className="text-sm leading-7 text-[var(--foreground)]">{data.aiInsight}</p>
-                <div className="inline-flex items-center gap-2 text-sm text-[var(--teal-700)]"><Sparkles className="h-4 w-4" />Generated from your recent symptom logs</div>
-              </>
-            ) : (
-              <div className="space-y-3">
-                <p className="text-sm leading-7 text-[var(--foreground-muted)]">Add symptom check-ins across the next two weeks to generate an AI trend summary here.</p>
-                <Link href="/symptoms"><Button variant="secondary">Log symptoms</Button></Link>
-              </div>
-            )}
-          </Card>
+          <DashboardInsightCard
+            initialInsight={data.aiInsight}
+            latestLogId={data.latestSymptomLog?.id ?? null}
+            payload={data.insightPayload}
+          />
         </div>
       </div>
 

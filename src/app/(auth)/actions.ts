@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { ensureProfileForUser, getAuthenticatedRedirectPath, getCurrentProfileWithSync } from "@/lib/auth";
 import { env } from "@/lib/env";
+import { loginSchema, signupSchema } from "@/lib/auth-form-schemas";
 import {
   getValidProviderInvitation,
   isProviderSpecialty,
@@ -20,7 +21,6 @@ function toRedirect(path: string, params: Record<string, string>): never {
   const search = new URLSearchParams(params);
   redirect(`${path}?${search.toString()}`);
 }
-
 
 function normalizeCompanyDomain(value: string) {
   return value
@@ -39,9 +39,22 @@ function isEmployerPlanType(value: string): value is EmployerPlanType {
   return employerPlanTypes.includes(value as EmployerPlanType);
 }
 
+function getSafeNextPath(value: string | undefined) {
+  return value && value.startsWith("/") && !value.startsWith("//") ? value : null;
+}
+
 export async function loginAction(formData: FormData) {
-  const email = String(formData.get("email") ?? "").trim();
-  const password = String(formData.get("password") ?? "");
+  const payload = loginSchema.safeParse({
+    email: String(formData.get("email") ?? "").trim(),
+    password: String(formData.get("password") ?? ""),
+    next: String(formData.get("next") ?? "").trim() || undefined,
+  });
+
+  if (!payload.success) {
+    toRedirect("/login", { error: payload.error.issues[0]?.message ?? "Enter a valid email and password." });
+  }
+
+  const { email, password, next } = payload.data;
   const supabase = await getSupabaseServerClient();
 
   const { data, error } = await supabase.auth.signInWithPassword({ email, password });
@@ -52,13 +65,21 @@ export async function loginAction(formData: FormData) {
 
   const profile = await getCurrentProfileWithSync(data.user);
   revalidatePath("/");
-  redirect(getAuthenticatedRedirectPath(profile));
+  redirect(getSafeNextPath(next) ?? getAuthenticatedRedirectPath(profile));
 }
 
 export async function signupAction(formData: FormData) {
-  const fullName = String(formData.get("fullName") ?? "").trim();
-  const email = String(formData.get("email") ?? "").trim();
-  const password = String(formData.get("password") ?? "");
+  const payload = signupSchema.safeParse({
+    fullName: String(formData.get("fullName") ?? "").trim(),
+    email: String(formData.get("email") ?? "").trim(),
+    password: String(formData.get("password") ?? ""),
+  });
+
+  if (!payload.success) {
+    toRedirect("/signup", { error: payload.error.issues[0]?.message ?? "Complete all required fields." });
+  }
+
+  const { fullName, email, password } = payload.data;
   const supabase = await getSupabaseServerClient();
 
   const { data, error } = await supabase.auth.signUp({

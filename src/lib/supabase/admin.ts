@@ -63,8 +63,93 @@ type AdminDatabase = {
           contract_end?: string | null;
         };
         Relationships: [];
+      };      appointments: {
+        Row: {
+          id: string;
+          patient_id: string | null;
+          provider_id: string | null;
+          status: string | null;
+          scheduled_at: string;
+        };
+        Insert: {
+          id?: string;
+          patient_id?: string | null;
+          provider_id?: string | null;
+          status?: string | null;
+          scheduled_at: string;
+        };
+        Update: {
+          id?: string;
+          patient_id?: string | null;
+          provider_id?: string | null;
+          status?: string | null;
+          scheduled_at?: string;
+        };
+        Relationships: [];
       };
-      messages: {
+      care_plans: {
+        Row: {
+          id: string;
+          patient_id: string | null;
+          status: string | null;
+        };
+        Insert: {
+          id?: string;
+          patient_id?: string | null;
+          status?: string | null;
+        };
+        Update: {
+          id?: string;
+          patient_id?: string | null;
+          status?: string | null;
+        };
+        Relationships: [];
+      };
+      conversations: {
+        Row: {
+          id: string;
+          patient_id: string;
+          provider_profile_id: string | null;
+          created_at: string | null;
+        };
+        Insert: {
+          id?: string;
+          patient_id: string;
+          provider_profile_id?: string | null;
+          created_at?: string | null;
+        };
+        Update: {
+          id?: string;
+          patient_id?: string;
+          provider_profile_id?: string | null;
+          created_at?: string | null;
+        };
+        Relationships: [];
+      };
+      notifications: {
+        Row: {
+          id: string;
+          type: string | null;
+          title: string;
+          created_at: string | null;
+          actor_id: string | null;
+        };
+        Insert: {
+          id?: string;
+          type?: string | null;
+          title: string;
+          created_at?: string | null;
+          actor_id?: string | null;
+        };
+        Update: {
+          id?: string;
+          type?: string | null;
+          title?: string;
+          created_at?: string | null;
+          actor_id?: string | null;
+        };
+        Relationships: [];
+      };      messages: {
         Row: {
           id: string;
           conversation_id: string;

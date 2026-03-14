@@ -51,14 +51,14 @@ const painOptions = Array.from({ length: 11 }, (_, index) => index);
 
 function getMoodEmoji(value: number) {
   if (value <= 3) {
-    return "ðŸ˜”";
+    return ":(";
   }
 
   if (value <= 6) {
-    return "ðŸ˜";
+    return ":|";
   }
 
-  return "ðŸ™‚";
+  return ":)";
 }
 
 function getPainClasses(value: number, selected: boolean) {
@@ -563,7 +563,7 @@ export function SymptomTracker({ logs: initialLogs, todayLog, latestInsight }: P
                           <p className="font-semibold">{formatLogDate(log.loggedAt)}</p>
                           <div className="mt-2 flex flex-wrap items-center gap-2 text-sm text-[var(--foreground-muted)]">
                             <span>{getMoodEmoji(log.mood)} Mood {log.mood}/10</span>
-                            <span>â€¢</span>
+                            <span>|</span>
                             <span className="inline-flex items-center gap-2">
                               Energy
                               <span className="relative h-2 w-16 overflow-hidden rounded-full bg-[var(--slate-100)]">
