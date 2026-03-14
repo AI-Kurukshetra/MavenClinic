@@ -1,17 +1,46 @@
-﻿import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { createClient } from "@supabase/supabase-js";
 
-type ProviderSeed = {
+type SeedRole = "patient" | "provider" | "employer_admin" | "clinic_admin" | "super_admin" | "partner";
+
+type SeedUser = {
   email: string;
   password: string;
   fullName: string;
+  role: SeedRole;
+  onboardingComplete: boolean;
+  employerDomain?: string;
+  dateOfBirth?: string;
+};
+
+type ProviderSeed = SeedUser & {
+  role: "provider";
   specialty: "ob_gyn" | "fertility" | "mental_health" | "nutrition" | "menopause";
   bio: string;
   languages: string[];
   consultationFeeCents: number;
   rating: number;
   totalReviews: number;
+};
+
+type EmployerSeed = {
+  companyName: string;
+  domain: string;
+  employeeCount: number;
+  planType: "standard" | "premium" | "enterprise";
+  contractStart: string;
+  contractEnd: string;
+};
+
+type AuthUserResult = {
+  id: string;
+  email: string;
+  fullName: string;
+  role: SeedRole;
+  onboardingComplete: boolean;
+  employerDomain?: string;
+  dateOfBirth?: string;
 };
 
 function loadEnvFile(filePath: string) {
@@ -62,11 +91,22 @@ const supabase = createClient(supabaseUrl, serviceRoleKey, {
   },
 });
 
+const employerSeed: EmployerSeed = {
+  companyName: "Acme Corp",
+  domain: "acme.com",
+  employeeCount: 2500,
+  planType: "enterprise",
+  contractStart: "2026-01-01",
+  contractEnd: "2026-12-31",
+};
+
 const providers: ProviderSeed[] = [
   {
     email: "sarah.chen@mavenclinic.dev",
     password: "Provider123!",
     fullName: "Dr. Sarah Chen",
+    role: "provider",
+    onboardingComplete: true,
     specialty: "ob_gyn",
     bio: "Board-certified OB/GYN with 12 years specializing in reproductive health and minimally invasive surgery.",
     languages: ["English", "Mandarin"],
@@ -78,6 +118,8 @@ const providers: ProviderSeed[] = [
     email: "amara.osei@mavenclinic.dev",
     password: "Provider123!",
     fullName: "Dr. Amara Osei",
+    role: "provider",
+    onboardingComplete: true,
     specialty: "fertility",
     bio: "Reproductive endocrinologist focused on IVF, IUI, and natural fertility optimization.",
     languages: ["English", "French"],
@@ -89,6 +131,8 @@ const providers: ProviderSeed[] = [
     email: "maya.patel@mavenclinic.dev",
     password: "Provider123!",
     fullName: "Dr. Maya Patel",
+    role: "provider",
+    onboardingComplete: true,
     specialty: "mental_health",
     bio: "Licensed therapist specializing in perinatal mental health, anxiety, and women's life transitions.",
     languages: ["English", "Hindi"],
@@ -100,6 +144,8 @@ const providers: ProviderSeed[] = [
     email: "elena.rodriguez@mavenclinic.dev",
     password: "Provider123!",
     fullName: "Dr. Elena Rodriguez",
+    role: "provider",
+    onboardingComplete: true,
     specialty: "menopause",
     bio: "Certified menopause specialist and hormone therapy expert helping women navigate midlife health.",
     languages: ["English", "Spanish"],
@@ -111,6 +157,8 @@ const providers: ProviderSeed[] = [
     email: "priya.sharma@mavenclinic.dev",
     password: "Provider123!",
     fullName: "Dr. Priya Sharma",
+    role: "provider",
+    onboardingComplete: true,
     specialty: "nutrition",
     bio: "Registered dietitian specializing in hormonal health, fertility nutrition, and prenatal care.",
     languages: ["English", "Hindi", "Gujarati"],
@@ -120,8 +168,51 @@ const providers: ProviderSeed[] = [
   },
 ];
 
+const demoUsers: SeedUser[] = [
+  {
+    email: "sarah.patient@mavenclinic.dev",
+    password: "Patient123!",
+    fullName: "Sarah Johnson",
+    role: "patient",
+    onboardingComplete: true,
+    employerDomain: employerSeed.domain,
+    dateOfBirth: "1994-08-14",
+  },
+  {
+    email: "benefits@acme.com",
+    password: "Employer123!",
+    fullName: "Avery Brooks",
+    role: "employer_admin",
+    onboardingComplete: true,
+    employerDomain: employerSeed.domain,
+  },
+  {
+    email: "clinic.admin@mavenclinic.dev",
+    password: "Clinic123!",
+    fullName: "Naomi Ellis",
+    role: "clinic_admin",
+    onboardingComplete: true,
+  },
+  {
+    email: "super.admin@mavenclinic.dev",
+    password: "Super123!",
+    fullName: "Morgan Lee",
+    role: "super_admin",
+    onboardingComplete: true,
+  },
+  {
+    email: "partner.demo@mavenclinic.dev",
+    password: "Partner123!",
+    fullName: "Jordan Miller",
+    role: "partner",
+    onboardingComplete: true,
+  },
+];
+
+const allSeedUsers: SeedUser[] = [...providers, ...demoUsers];
+
 async function getAllAuthUsers() {
-  const users: Array<{ id: string; email?: string | null; user_metadata?: { full_name?: string } }> = [];
+  const users: Array<{ id: string; email?: string | null }> = [];
   let page = 1;
 
   while (true) {
@@ -141,55 +232,113 @@ async function getAllAuthUsers() {
   return users;
 }
 
-async function ensureProviderUsers() {
+async function ensureAuthUsers(seedUsers: SeedUser[]) {
   const existingUsers = await getAllAuthUsers();
   const userByEmail = new Map(existingUsers.map((user) => [user.email?.toLowerCase(), user]));
-  const results: Array<{ id: string; email: string; fullName: string }> = [];
+  const results: AuthUserResult[] = [];
 
-  for (const provider of providers) {
-    const existing = userByEmail.get(provider.email.toLowerCase());
+  for (const seedUser of seedUsers) {
+    const existing = userByEmail.get(seedUser.email.toLowerCase());
     if (existing?.id) {
-      console.log(`  = User already exists: ${provider.email}`);
-      results.push({ id: existing.id, email: provider.email, fullName: provider.fullName });
+      console.log(`  = User already exists: ${seedUser.email}`);
+      results.push({
+        id: existing.id,
+        email: seedUser.email,
+        fullName: seedUser.fullName,
+        role: seedUser.role,
+        onboardingComplete: seedUser.onboardingComplete,
+        employerDomain: seedUser.employerDomain,
+        dateOfBirth: seedUser.dateOfBirth,
+      });
       continue;
     }
 
     const { data, error } = await supabase.auth.admin.createUser({
-      email: provider.email,
-      password: provider.password,
+      email: seedUser.email,
+      password: seedUser.password,
       email_confirm: true,
-      user_metadata: { full_name: provider.fullName },
+      user_metadata: {
+        full_name: seedUser.fullName,
+        onboardingComplete: seedUser.onboardingComplete,
+      },
     });
 
     if (error || !data.user) {
-      throw new Error(`Failed to create auth user ${provider.email}: ${error?.message ?? "Unknown error"}`);
+      throw new Error(`Failed to create auth user ${seedUser.email}: ${error?.message ?? "Unknown error"}`);
     }
 
-    console.log(`  + Created user: ${provider.email}`);
-    results.push({ id: data.user.id, email: provider.email, fullName: provider.fullName });
+    console.log(`  + Created user: ${seedUser.email}`);
+    results.push({
+      id: data.user.id,
+      email: seedUser.email,
+      fullName: seedUser.fullName,
+      role: seedUser.role,
+      onboardingComplete: seedUser.onboardingComplete,
+      employerDomain: seedUser.employerDomain,
+      dateOfBirth: seedUser.dateOfBirth,
+    });
   }
 
   return results;
 }
 
-async function seedProfiles(users: Array<{ id: string; email: string; fullName: string }>) {
+async function seedEmployer() {
+  const { data: existing, error: existingError } = await supabase
+    .from("employers")
+    .select("id, company_name")
+    .eq("domain", employerSeed.domain)
+    .maybeSingle();
+
+  if (existingError) {
+    throw new Error(`Failed checking employer seed: ${existingError.message}`);
+  }
+
+  const payload = {
+    company_name: employerSeed.companyName,
+    domain: employerSeed.domain,
+    employee_count: employerSeed.employeeCount,
+    plan_type: employerSeed.planType,
+    contract_start: employerSeed.contractStart,
+    contract_end: employerSeed.contractEnd,
+  };
+
+  if (existing?.id) {
+    const { error } = await supabase.from("employers").update(payload).eq("id", existing.id);
+    if (error) {
+      throw new Error(`Failed updating employer seed: ${error.message}`);
+    }
+    console.log(`  = Updated employer: ${payload.company_name}`);
+    return existing.id;
+  }
+
+  const { data, error } = await supabase.from("employers").insert(payload).select("id").single();
+  if (error || !data?.id) {
+    throw new Error(`Failed inserting employer seed: ${error?.message ?? "Unknown error"}`);
+  }
+  console.log(`  + Created employer: ${payload.company_name}`);
+  return data.id;
+}
+
+async function seedProfiles(users: AuthUserResult[], employerId: string) {
   const { error } = await supabase.from("profiles").upsert(
     users.map((user) => ({
       id: user.id,
       full_name: user.fullName,
-      role: "provider",
-      onboarding_complete: true,
+      role: user.role,
+      onboarding_complete: user.onboardingComplete,
+      employer_id: user.employerDomain === employerSeed.domain ? employerId : null,
+      date_of_birth: user.dateOfBirth ?? null,
     })),
   );
 
   if (error) {
-    throw new Error(`Failed to upsert provider profiles: ${error.message}`);
+    throw new Error(`Failed to upsert profiles: ${error.message}`);
   }
 
-  console.log(`  + Upserted ${users.length} provider profiles`);
+  console.log(`  + Upserted ${users.length} profiles`);
 }
 
-async function seedProviderRows(users: Array<{ id: string; email: string; fullName: string }>) {
+async function seedProviderRows(users: AuthUserResult[]) {
   for (const provider of providers) {
     const user = users.find((entry) => entry.email === provider.email);
     if (!user) {
@@ -233,52 +382,23 @@ async function seedProviderRows(users: Array<{ id: string; email: string; fullNa
   }
 }
 
-async function seedEmployer() {
-  const { data: existing, error: existingError } = await supabase
-    .from("employers")
-    .select("id, company_name")
-    .eq("domain", "acme.com")
-    .maybeSingle();
+function printCredentials() {
+  console.log("\nDemo credentials by role:");
 
-  if (existingError) {
-    throw new Error(`Failed checking employer seed: ${existingError.message}`);
+  for (const user of allSeedUsers) {
+    console.log(`  [${user.role}] ${user.email} / ${user.password}`);
   }
-
-  const payload = {
-    company_name: "Acme Corp",
-    domain: "acme.com",
-    employee_count: 2500,
-    plan_type: "enterprise",
-    contract_start: "2026-01-01",
-    contract_end: "2026-12-31",
-  };
-
-  if (existing?.id) {
-    const { error } = await supabase.from("employers").update(payload).eq("id", existing.id);
-    if (error) {
-      throw new Error(`Failed updating employer seed: ${error.message}`);
-    }
-    console.log(`  = Updated employer: ${payload.company_name}`);
-    return;
-  }
-
-  const { error } = await supabase.from("employers").insert(payload);
-  if (error) {
-    throw new Error(`Failed inserting employer seed: ${error.message}`);
-  }
-  console.log(`  + Created employer: ${payload.company_name}`);
 }
 
 async function main() {
   console.log("Seeding Maven Clinic database...");
-  const users = await ensureProviderUsers();
-  await seedProfiles(users);
+  const employerId = await seedEmployer();
+  const users = await ensureAuthUsers(allSeedUsers);
+  await seedProfiles(users, employerId);
   await seedProviderRows(users);
-  await seedEmployer();
 
   console.log("\nSeed complete.");
-  console.log("\nDemo provider credentials:");
-  providers.forEach((provider) => console.log(`  ${provider.email} / ${provider.password}`));
+  printCredentials();
 }
 
 main().catch((error) => {
