@@ -1,109 +1,108 @@
-﻿import { FileText, FlaskConical, Pill } from "lucide-react";
+import { FileText, FlaskConical, Pill } from "lucide-react";
 import { DashboardShell } from "@/components/health/dashboard-shell";
 import { Card } from "@/components/ui/card";
+import { PageErrorState } from "@/components/ui/PageErrorState";
 import { getRecordsData } from "@/lib/data";
 import { formatDate } from "@/lib/utils";
 
+export const revalidate = 0;
+
 export default async function RecordsPage() {
-  const { records, prescriptions, labs } = await getRecordsData();
+  try {
+    const { records, prescriptions, labs } = await getRecordsData();
+    const timelineItems = [
+      ...labs.map((lab) => ({ id: lab.id, title: lab.panelName, date: lab.resultedAt ?? lab.orderedAt, summary: lab.summary })),
+      ...records.map((record) => ({ id: record.id, title: record.title, date: record.date, summary: record.summary })),
+    ].sort((left, right) => new Date(right.date).getTime() - new Date(left.date).getTime());
 
-  return (
-    <DashboardShell title="Medical records" eyebrow="Lab results, prescriptions, and visit history">
-      <div className="space-y-6">
-        <div className="grid gap-4 md:grid-cols-3">
-          <Card className="p-5">
-            <div className="flex items-center gap-3">
-              <Pill className="h-5 w-5 text-[var(--teal-700)]" />
-              <div>
-                <p className="text-sm text-[var(--foreground-muted)]">Prescriptions</p>
-                <p className="text-2xl font-semibold">{prescriptions.length}</p>
+    return (
+      <DashboardShell title="Medical records" eyebrow="Lab results, prescriptions, and visit history">
+        <div className="space-y-6">
+          <div className="grid gap-4 md:grid-cols-3">
+            <Card className="p-5">
+              <div className="flex items-center gap-3">
+                <Pill className="h-5 w-5 text-[var(--teal-700)]" />
+                <div>
+                  <p className="text-sm text-[var(--foreground-muted)]">Prescriptions</p>
+                  <p className="text-2xl font-semibold">{prescriptions.length}</p>
+                </div>
               </div>
-            </div>
-          </Card>
-          <Card className="p-5">
-            <div className="flex items-center gap-3">
-              <FlaskConical className="h-5 w-5 text-[var(--teal-700)]" />
-              <div>
-                <p className="text-sm text-[var(--foreground-muted)]">Lab results</p>
-                <p className="text-2xl font-semibold">{labs.length}</p>
+            </Card>
+            <Card className="p-5">
+              <div className="flex items-center gap-3">
+                <FlaskConical className="h-5 w-5 text-[var(--teal-700)]" />
+                <div>
+                  <p className="text-sm text-[var(--foreground-muted)]">Lab results</p>
+                  <p className="text-2xl font-semibold">{labs.length}</p>
+                </div>
               </div>
-            </div>
-          </Card>
-          <Card className="p-5">
-            <div className="flex items-center gap-3">
-              <FileText className="h-5 w-5 text-[var(--teal-700)]" />
-              <div>
-                <p className="text-sm text-[var(--foreground-muted)]">Total records</p>
-                <p className="text-2xl font-semibold">{records.length}</p>
+            </Card>
+            <Card className="p-5">
+              <div className="flex items-center gap-3">
+                <FileText className="h-5 w-5 text-[var(--teal-700)]" />
+                <div>
+                  <p className="text-sm text-[var(--foreground-muted)]">Total records</p>
+                  <p className="text-2xl font-semibold">{records.length}</p>
+                </div>
               </div>
-            </div>
-          </Card>
-        </div>
+            </Card>
+          </div>
 
-        <div className="grid gap-6 xl:grid-cols-2">
-          <Card className="space-y-4">
-            <div className="flex items-center gap-3">
-              <Pill className="h-5 w-5 text-[var(--teal-700)]" />
-              <h2 className="text-2xl font-semibold">Prescriptions</h2>
-            </div>
-            {prescriptions.length ? (
+          <div className="grid gap-4 xl:grid-cols-2">
+            <Card className="space-y-4 p-6">
+              <div className="space-y-1">
+                <h2 className="text-xl font-semibold">Prescriptions</h2>
+                <p className="text-sm text-[var(--foreground-muted)]">Medication plans from your care team.</p>
+              </div>
               <div className="space-y-3">
-                {prescriptions.map((prescription) => (
-                  <div key={prescription.id} className="rounded-[24px] border border-[var(--border)] bg-[var(--slate-50)] p-4">
-                    <div className="flex flex-wrap items-center justify-between gap-3">
-                      <div>
-                        <p className="font-semibold">{prescription.medicationName}</p>
-                        <p className="text-sm text-[var(--foreground-muted)]">{prescription.providerName}</p>
+                {prescriptions.length ? (
+                  prescriptions.map((prescription) => (
+                    <div key={prescription.id} className="rounded-[24px] border border-[var(--border)] p-4">
+                      <div className="flex items-center justify-between gap-3">
+                        <div>
+                          <p className="font-semibold text-[var(--foreground)]">{prescription.medicationName}</p>
+                          <p className="text-sm text-[var(--foreground-muted)]">{prescription.dosage} - {prescription.frequency}</p>
+                        </div>
+                        <span className="rounded-full bg-[var(--teal-50)] px-3 py-1 text-xs font-medium text-[var(--teal-700)]">{prescription.status}</span>
                       </div>
-                      <span className="rounded-full bg-white px-3 py-1 text-xs font-medium text-[var(--teal-700)]">{prescription.status}</span>
+                      <p className="mt-3 text-sm text-[var(--foreground-muted)]">{prescription.instructions}</p>
                     </div>
-                    <p className="mt-3 text-sm text-[var(--foreground-muted)]">{prescription.dosage} · {prescription.frequency}</p>
-                    <p className="mt-2 text-sm leading-6 text-[var(--foreground-muted)]">{prescription.instructions}</p>
-                    <p className="mt-3 text-xs uppercase tracking-[0.16em] text-[var(--foreground-muted)]">Issued {formatDate(prescription.prescribedAt)}</p>
-                  </div>
-                ))}
+                  ))
+                ) : (
+                  <p className="text-sm text-[var(--foreground-muted)]">No prescriptions available yet.</p>
+                )}
               </div>
-            ) : (
-              <p className="text-sm text-[var(--foreground-muted)]">No prescriptions have been added to your chart yet.</p>
-            )}
-          </Card>
+            </Card>
 
-          <Card className="space-y-4">
-            <div className="flex items-center gap-3">
-              <FlaskConical className="h-5 w-5 text-[var(--teal-700)]" />
-              <h2 className="text-2xl font-semibold">Lab results</h2>
-            </div>
-            {labs.length ? (
-              <div className="space-y-3">
-                {labs.map((lab) => (
-                  <div key={lab.id} className="rounded-[24px] border border-[var(--border)] bg-[var(--slate-50)] p-4">
-                    <div className="flex flex-wrap items-center justify-between gap-3">
-                      <div>
-                        <p className="font-semibold">{lab.panelName}</p>
-                        <p className="text-sm text-[var(--foreground-muted)]">{lab.providerName}</p>
-                      </div>
-                      <span className="rounded-full bg-white px-3 py-1 text-xs font-medium text-[var(--teal-700)]">{lab.status}</span>
-                    </div>
-                    <p className="mt-3 text-sm leading-6 text-[var(--foreground-muted)]">{lab.summary}</p>
-                    {lab.markers.length ? (
-                      <div className="mt-4 flex flex-wrap gap-2">
-                        {lab.markers.map((marker) => (
-                          <span key={`${lab.id}-${marker.label}`} className="rounded-full bg-white px-3 py-1 text-xs font-medium text-[var(--foreground-muted)]">
-                            {marker.label}: {marker.value}
-                          </span>
-                        ))}
-                      </div>
-                    ) : null}
-                    <p className="mt-3 text-xs uppercase tracking-[0.16em] text-[var(--foreground-muted)]">{lab.resultedAt ? `Resulted ${formatDate(lab.resultedAt)}` : `Ordered ${formatDate(lab.orderedAt)}`}</p>
-                  </div>
-                ))}
+            <Card className="space-y-4 p-6">
+              <div className="space-y-1">
+                <h2 className="text-xl font-semibold">Labs and visit records</h2>
+                <p className="text-sm text-[var(--foreground-muted)]">Recent labs and chart notes.</p>
               </div>
-            ) : (
-              <p className="text-sm text-[var(--foreground-muted)]">No lab results are available yet. Your provider will share them here once reviewed.</p>
-            )}
-          </Card>
+              <div className="space-y-3">
+                {timelineItems.length ? (
+                  timelineItems.map((item) => (
+                    <div key={item.id} className="rounded-[24px] border border-[var(--border)] p-4">
+                      <p className="font-semibold text-[var(--foreground)]">{item.title}</p>
+                      <p className="mt-1 text-xs uppercase tracking-[0.18em] text-[var(--foreground-subtle)]">{formatDate(item.date)}</p>
+                      <p className="mt-3 text-sm text-[var(--foreground-muted)]">{item.summary}</p>
+                    </div>
+                  ))
+                ) : (
+                  <p className="text-sm text-[var(--foreground-muted)]">No records available yet.</p>
+                )}
+              </div>
+            </Card>
+          </div>
         </div>
-      </div>
-    </DashboardShell>
-  );
+      </DashboardShell>
+    );
+  } catch (error) {
+    console.error("Records page error:", error);
+    return (
+      <DashboardShell title="Medical records" eyebrow="Lab results, prescriptions, and visit history">
+        <PageErrorState title="Unable to load medical records" message="Please refresh the page to try again." href="/records" />
+      </DashboardShell>
+    );
+  }
 }

@@ -1,4 +1,4 @@
-﻿import { redirect } from "next/navigation";
+import { redirect } from "next/navigation";
 import type { User } from "@supabase/supabase-js";
 import { getAuthenticatedRedirectPath as getRoleRedirectPath, type AppRole } from "@/lib/roles";
 import { getSupabaseAdminClient } from "@/lib/supabase/admin";
@@ -88,19 +88,24 @@ export async function getCurrentProfile(userId?: string): Promise<ProfileRow | n
     return null;
   }
 
-  const admin = getSupabaseAdminClient();
-  const { data, error } = await admin
-    .from("profiles")
-    .select("id, role, full_name, date_of_birth, onboarding_complete, employer_id")
-    .eq("id", currentUserId)
-    .maybeSingle();
+  try {
+    const admin = getSupabaseAdminClient();
+    const { data, error } = await admin
+      .from("profiles")
+      .select("id, role, full_name, date_of_birth, onboarding_complete, employer_id")
+      .eq("id", currentUserId)
+      .maybeSingle();
 
-  if (error) {
-    console.error("Admin profile lookup failed:", { userId: currentUserId, message: error.message });
+    if (error) {
+      console.error("getCurrentProfile error:", error.message);
+      return null;
+    }
+
+    return (data as ProfileRow | null) ?? null;
+  } catch (err) {
+    console.error("getCurrentProfile failed:", err);
     return null;
   }
-
-  return (data as ProfileRow | null) ?? null;
 }
 
 export async function ensureProfileForUser(user: User) {
@@ -124,17 +129,7 @@ export async function ensureProfileForUser(user: User) {
 }
 
 export async function getCurrentProfileWithSync(user: User): Promise<ProfileRow | null> {
-  const admin = getSupabaseAdminClient();
-  const { data: profile, error } = await admin
-    .from("profiles")
-    .select("id, role, full_name, date_of_birth, onboarding_complete, employer_id")
-    .eq("id", user.id)
-    .maybeSingle();
-
-  if (error) {
-    console.error("Profile not found for user:", user.id, error.message);
-    return null;
-  }
+  const profile = await getCurrentProfile(user.id);
 
   if (!profile) {
     console.error("Profile not found for user:", user.id);
@@ -143,14 +138,17 @@ export async function getCurrentProfileWithSync(user: User): Promise<ProfileRow 
 
   const metaRole = typeof user.user_metadata?.role === "string" ? user.user_metadata.role : null;
   if (metaRole !== profile.role) {
-    console.log("Syncing role metadata:", profile.role);
-    const supabase = await getSupabaseServerClient();
-    await supabase.auth.updateUser({
-      data: { role: profile.role },
-    });
+    try {
+      const supabase = await getSupabaseServerClient();
+      await supabase.auth.updateUser({
+        data: { role: profile.role },
+      });
+    } catch (syncErr) {
+      console.error("Role sync failed:", syncErr);
+    }
   }
 
-  return profile as ProfileRow;
+  return profile;
 }
 
 export function getAuthenticatedRedirectPath(profile: {
