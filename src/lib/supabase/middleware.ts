@@ -1,12 +1,8 @@
-﻿import { NextResponse, type NextRequest } from "next/server";
+import { NextResponse, type NextRequest } from "next/server";
 import type { User } from "@supabase/supabase-js";
 import { createServerClient } from "@supabase/ssr";
 import { publicEnv } from "@/lib/env";
-import {
-  getAuthenticatedRedirectPath,
-  patientRoutePrefixes,
-  type AppRole,
-} from "@/lib/roles";
+import { patientRoutePrefixes, type AppRole } from "@/lib/roles";
 
 type RouteRule = {
   prefix: string;
@@ -96,11 +92,7 @@ function buildPermissionsPolicy(pathname: string) {
 }
 
 function buildContentSecurityPolicy(pathname: string) {
-  const connectSources = [
-    "'self'",
-    "https://*.supabase.co",
-    "wss://*.supabase.co",
-  ];
+  const connectSources = ["'self'", "https://*.supabase.co", "wss://*.supabase.co"];
 
   if (pathname.startsWith("/consultations")) {
     connectSources.push("https://api.daily.co", "https://*.daily.co", "wss://*.daily.co");
@@ -136,11 +128,7 @@ function applySecurityHeaders(response: NextResponse, pathname: string) {
 }
 
 function logMiddlewareDecision(path: string, role: AppRole | null, redirectPath: string | null) {
-  console.log("Middleware:", {
-    path,
-    role,
-    redirect: redirectPath,
-  });
+  console.log("Middleware:", { path, role, redirect: redirectPath });
 }
 
 function withRedirectCount(response: NextResponse, redirectCount: number) {
@@ -182,10 +170,27 @@ function redirectLoopResponse(request: NextRequest) {
   return response;
 }
 
+function getDefaultRedirect(role: AppRole, onboardingComplete: boolean) {
+  switch (role) {
+    case "provider":
+      return "/provider/dashboard";
+    case "employer_admin":
+      return "/employer/dashboard";
+    case "clinic_admin":
+      return "/clinic/dashboard";
+    case "super_admin":
+      return "/super/dashboard";
+    case "partner":
+      return "/partner/dashboard";
+    case "patient":
+    default:
+      return onboardingComplete ? "/dashboard" : "/onboarding";
+  }
+}
+
 function handleRoleRedirect(request: NextRequest, redirectCount: number, role: AppRole, onboardingComplete: boolean) {
   const pathname = request.nextUrl.pathname;
-  const defaultRedirect =
-    role === "patient" ? (onboardingComplete ? "/dashboard" : "/onboarding") : getAuthenticatedRedirectPath({ role });
+  const defaultRedirect = getDefaultRedirect(role, onboardingComplete);
 
   if (pathname === "/" || isAuthEntryPath(pathname)) {
     return redirectTo(request, defaultRedirect, redirectCount, role);
@@ -202,24 +207,18 @@ function handleRoleRedirect(request: NextRequest, redirectCount: number, role: A
 export async function updateSession(request: NextRequest) {
   let response = NextResponse.next({ request });
 
-  const supabase = createServerClient(
-    publicEnv.NEXT_PUBLIC_SUPABASE_URL,
-    publicEnv.NEXT_PUBLIC_SUPABASE_ANON_KEY,
-    {
-      cookies: {
-        getAll() {
-          return request.cookies.getAll();
-        },
-        setAll(cookiesToSet) {
-          cookiesToSet.forEach(({ name, value }) => request.cookies.set(name, value));
-          response = NextResponse.next({ request });
-          cookiesToSet.forEach(({ name, value, options }) =>
-            response.cookies.set(name, value, options),
-          );
-        },
+  const supabase = createServerClient(publicEnv.NEXT_PUBLIC_SUPABASE_URL, publicEnv.NEXT_PUBLIC_SUPABASE_ANON_KEY, {
+    cookies: {
+      getAll() {
+        return request.cookies.getAll();
+      },
+      setAll(cookiesToSet) {
+        cookiesToSet.forEach(({ name, value }) => request.cookies.set(name, value));
+        response = NextResponse.next({ request });
+        cookiesToSet.forEach(({ name, value, options }) => response.cookies.set(name, value, options));
       },
     },
-  );
+  });
 
   const pathname = request.nextUrl.pathname;
   const redirectCount = Number.parseInt(request.cookies.get("redirect_count")?.value ?? "0", 10);
@@ -234,8 +233,10 @@ export async function updateSession(request: NextRequest) {
   const protectedPath = onboardingPath || patientAppPath || Boolean(requiredRoles);
 
   const {
-    data: { user },
-  } = await supabase.auth.getUser();
+    data: { session },
+  } = await supabase.auth.getSession();
+
+  const user = session?.user ?? null;
 
   if (!user) {
     if (protectedPath) {
@@ -250,6 +251,10 @@ export async function updateSession(request: NextRequest) {
   const onboardingComplete = hasCompletedOnboardingMetadata(user);
 
   if (!role) {
+    if (protectedPath) {
+      return redirectToLogin(request, redirectCount, null);
+    }
+
     logMiddlewareDecision(pathname, null, null);
     return clearRedirectCount(applySecurityHeaders(response, pathname));
   }
@@ -260,10 +265,10 @@ export async function updateSession(request: NextRequest) {
   }
 
   if (requiredRoles && !requiredRoles.includes(role)) {
-    logMiddlewareDecision(pathname, role, null);
-    return clearRedirectCount(applySecurityHeaders(response, pathname));
+    return redirectToLogin(request, redirectCount, role);
   }
 
   logMiddlewareDecision(pathname, role, null);
   return clearRedirectCount(applySecurityHeaders(response, pathname));
 }
+
