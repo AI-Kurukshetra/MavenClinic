@@ -64,10 +64,23 @@ type ProfileRow = {
   avatar_url: string | null;
 };
 
+function getAdminClientSafe() {
+  try {
+    return getSupabaseAdminClient();
+  } catch (error) {
+    console.error("Appointments admin client unavailable:", {
+      message: error instanceof Error ? error.message : String(error),
+    });
+    return null;
+  }
+}
+
 async function getProviderProfilesMap(profileIds: string[]) {
-  const admin = getSupabaseAdminClient();
+  const admin = getAdminClientSafe();
+  const supabase = await getSupabaseServerClient();
+  const profileClient = admin ?? supabase;
   const { data, error } = profileIds.length
-    ? await admin.from("profiles").select("id, full_name, avatar_url").in("id", profileIds)
+    ? await profileClient.from("profiles").select("id, full_name, avatar_url").in("id", profileIds)
     : { data: [], error: null };
 
   if (error) {
@@ -122,144 +135,159 @@ export async function getAppointmentsPageData(): Promise<AppointmentsPageData> {
     throw new Error("Authenticated patient required.");
   }
 
-  const supabase = await getSupabaseServerClient();
-  const admin = getSupabaseAdminClient();
-  const bookingWindowStart = startOfDay(new Date()).toISOString();
-  const bookingWindowEnd = endOfDay(addDays(new Date(), 13)).toISOString();
+  try {
+    const supabase = await getSupabaseServerClient();
+    const admin = getAdminClientSafe();
+    const providerClient = admin ?? supabase;
+    const bookingWindowStart = startOfDay(new Date()).toISOString();
+    const bookingWindowEnd = endOfDay(addDays(new Date(), 13)).toISOString();
 
-  const [upcomingAppointmentsResult, bookableProvidersResult] = await Promise.all([
-    supabase
-      .from("appointments")
-      .select("id, patient_id, provider_id, scheduled_at, duration_minutes, type, status, chief_complaint, video_room_url, notes, payment_method, started_at")
-      .eq("patient_id", user.id)
-      .in("status", ["scheduled", "in_progress"])
-      .order("scheduled_at", { ascending: true }),
-    admin
-      .from("providers")
-      .select("id, profile_id, specialty, bio, languages, accepting_patients, consultation_fee_cents, rating, total_reviews")
-      .eq("accepting_patients", true)
-      .order("specialty", { ascending: true }),
-  ]);
+    const [upcomingAppointmentsResult, bookableProvidersResult] = await Promise.all([
+      supabase
+        .from("appointments")
+        .select("id, patient_id, provider_id, scheduled_at, duration_minutes, type, status, chief_complaint, video_room_url, notes, payment_method, started_at")
+        .eq("patient_id", user.id)
+        .in("status", ["scheduled", "in_progress"])
+        .order("scheduled_at", { ascending: true }),
+      providerClient
+        .from("providers")
+        .select("id, profile_id, specialty, bio, languages, accepting_patients, consultation_fee_cents, rating, total_reviews")
+        .eq("accepting_patients", true)
+        .order("specialty", { ascending: true }),
+    ]);
 
-  if (upcomingAppointmentsResult.error) {
-    throw new Error(upcomingAppointmentsResult.error.message);
-  }
-
-  if (bookableProvidersResult.error) {
-    throw new Error(bookableProvidersResult.error.message);
-  }
-
-  const upcomingAppointmentsRows = upcomingAppointmentsResult.data ?? [];
-  const bookableProviderRows = (bookableProvidersResult.data ?? []) as ProviderRow[];
-  const appointmentProviderIds = Array.from(new Set(upcomingAppointmentsRows.map((appointment) => appointment.provider_id).filter(Boolean)));
-  const allProviderIds = Array.from(new Set([...appointmentProviderIds, ...bookableProviderRows.map((provider) => provider.id)]));
-
-  const [appointmentProviderRowsResult, availabilityResult, bookedAppointmentsResult] = await Promise.all([
-    allProviderIds.length
-      ? admin
-          .from("providers")
-          .select("id, profile_id, specialty, bio, languages, accepting_patients, consultation_fee_cents, rating, total_reviews")
-          .in("id", allProviderIds)
-      : Promise.resolve({ data: [] as ProviderRow[], error: null }),
-    allProviderIds.length
-      ? supabase
-          .from("provider_availability")
-          .select("id, provider_id, day_of_week, start_time, end_time")
-          .in("provider_id", allProviderIds)
-      : Promise.resolve({ data: [] as Array<AvailabilityRow & { provider_id: string }>, error: null }),
-    allProviderIds.length
-      ? supabase
-          .from("appointments")
-          .select("id, provider_id, scheduled_at, duration_minutes, status")
-          .in("provider_id", allProviderIds)
-          .neq("status", "cancelled")
-          .gte("scheduled_at", bookingWindowStart)
-          .lte("scheduled_at", bookingWindowEnd)
-      : Promise.resolve({ data: [] as Array<BookedAppointmentRow & { provider_id: string }>, error: null }),
-  ]);
-
-  if (appointmentProviderRowsResult.error) {
-    throw new Error(appointmentProviderRowsResult.error.message);
-  }
-
-  if (availabilityResult.error) {
-    throw new Error(availabilityResult.error.message);
-  }
-
-  if (bookedAppointmentsResult.error) {
-    throw new Error(bookedAppointmentsResult.error.message);
-  }
-
-  const allProviderRows = (appointmentProviderRowsResult.data ?? []) as ProviderRow[];
-  const profileIds = Array.from(new Set(allProviderRows.map((provider) => provider.profile_id).filter((value): value is string => Boolean(value))));
-  const [profilesMap, conversationMap] = await Promise.all([
-    getProviderProfilesMap(profileIds),
-    getConversationMap(user.id, profileIds),
-  ]);
-
-  const availabilityByProviderId = new Map<string, AvailabilityRow[]>();
-  for (const row of (availabilityResult.data ?? []) as Array<AvailabilityRow & { provider_id: string }>) {
-    const current = availabilityByProviderId.get(row.provider_id) ?? [];
-    current.push(row);
-    availabilityByProviderId.set(row.provider_id, current);
-  }
-
-  const bookingsByProviderId = new Map<string, BookedAppointmentRow[]>();
-  for (const row of (bookedAppointmentsResult.data ?? []) as Array<BookedAppointmentRow & { provider_id: string }>) {
-    const current = bookingsByProviderId.get(row.provider_id) ?? [];
-    current.push(row);
-    bookingsByProviderId.set(row.provider_id, current);
-  }
-
-  const providerMap = new Map<string, BookingProvider>();
-  for (const provider of allProviderRows) {
-    const profile = provider.profile_id ? profilesMap.get(provider.profile_id) : null;
-    const availability = buildAvailabilityByDate(
-      availabilityByProviderId.get(provider.id) ?? [],
-      bookingsByProviderId.get(provider.id) ?? [],
-    );
-
-    providerMap.set(provider.id, mapProvider(provider, profile, availability));
-  }
-
-  const upcomingAppointments: UpcomingAppointment[] = upcomingAppointmentsRows.flatMap((appointment) => {
-    const provider = providerMap.get(appointment.provider_id);
-
-    if (!provider) {
-      return [];
+    if (upcomingAppointmentsResult.error) {
+      throw new Error(upcomingAppointmentsResult.error.message);
     }
 
-    return [
-      {
-        id: appointment.id,
-        patientId: appointment.patient_id,
-        providerId: appointment.provider_id,
-        providerName: provider.fullName,
-        providerSpecialty: provider.specialtyLabel,
-        providerAvatarUrl: provider.avatarUrl,
-        scheduledAt: appointment.scheduled_at,
-        durationMinutes: appointment.duration_minutes ?? 30,
-        type: appointment.type,
-        status: appointment.status,
-        chiefComplaint: appointment.chief_complaint ?? "General follow-up",
-        videoRoomUrl: appointment.video_room_url ?? undefined,
-        notes: appointment.notes ?? undefined,
-        paymentMethod: (appointment.payment_method as Appointment["paymentMethod"]) ?? undefined,
-        startedAt: appointment.started_at ?? undefined,
-        conversationId: provider.profileId ? conversationMap.get(provider.profileId) : undefined,
-      },
-    ];
-  });
+    if (bookableProvidersResult.error) {
+      throw new Error(bookableProvidersResult.error.message);
+    }
 
-  const bookingProviders = bookableProviderRows
-    .map((provider) => providerMap.get(provider.id))
-    .filter((provider): provider is BookingProvider => Boolean(provider));
+    const upcomingAppointmentsRows = upcomingAppointmentsResult.data ?? [];
+    const bookableProviderRows = (bookableProvidersResult.data ?? []) as ProviderRow[];
+    const appointmentProviderIds = Array.from(new Set(upcomingAppointmentsRows.map((appointment) => appointment.provider_id).filter(Boolean)));
+    const allProviderIds = Array.from(new Set([...appointmentProviderIds, ...bookableProviderRows.map((provider) => provider.id)]));
 
-  return {
-    currentUserId: user.id,
-    upcomingAppointments,
-    bookingProviders,
-  };
+    const [appointmentProviderRowsResult, availabilityResult, bookedAppointmentsResult] = await Promise.all([
+      allProviderIds.length
+        ? providerClient
+            .from("providers")
+            .select("id, profile_id, specialty, bio, languages, accepting_patients, consultation_fee_cents, rating, total_reviews")
+            .in("id", allProviderIds)
+        : Promise.resolve({ data: [] as ProviderRow[], error: null }),
+      allProviderIds.length
+        ? supabase
+            .from("provider_availability")
+            .select("id, provider_id, day_of_week, start_time, end_time")
+            .in("provider_id", allProviderIds)
+        : Promise.resolve({ data: [] as Array<AvailabilityRow & { provider_id: string }>, error: null }),
+      allProviderIds.length
+        ? supabase
+            .from("appointments")
+            .select("id, provider_id, scheduled_at, duration_minutes, status")
+            .in("provider_id", allProviderIds)
+            .neq("status", "cancelled")
+            .gte("scheduled_at", bookingWindowStart)
+            .lte("scheduled_at", bookingWindowEnd)
+        : Promise.resolve({ data: [] as Array<BookedAppointmentRow & { provider_id: string }>, error: null }),
+    ]);
+
+    if (appointmentProviderRowsResult.error) {
+      throw new Error(appointmentProviderRowsResult.error.message);
+    }
+
+    if (availabilityResult.error) {
+      throw new Error(availabilityResult.error.message);
+    }
+
+    if (bookedAppointmentsResult.error) {
+      throw new Error(bookedAppointmentsResult.error.message);
+    }
+
+    const allProviderRows = (appointmentProviderRowsResult.data ?? []) as ProviderRow[];
+    const profileIds = Array.from(new Set(allProviderRows.map((provider) => provider.profile_id).filter((value): value is string => Boolean(value))));
+    const [profilesMap, conversationMap] = await Promise.all([
+      getProviderProfilesMap(profileIds),
+      getConversationMap(user.id, profileIds),
+    ]);
+
+    const availabilityByProviderId = new Map<string, AvailabilityRow[]>();
+    for (const row of (availabilityResult.data ?? []) as Array<AvailabilityRow & { provider_id: string }>) {
+      const current = availabilityByProviderId.get(row.provider_id) ?? [];
+      current.push(row);
+      availabilityByProviderId.set(row.provider_id, current);
+    }
+
+    const bookingsByProviderId = new Map<string, BookedAppointmentRow[]>();
+    for (const row of (bookedAppointmentsResult.data ?? []) as Array<BookedAppointmentRow & { provider_id: string }>) {
+      const current = bookingsByProviderId.get(row.provider_id) ?? [];
+      current.push(row);
+      bookingsByProviderId.set(row.provider_id, current);
+    }
+
+    const providerMap = new Map<string, BookingProvider>();
+    for (const provider of allProviderRows) {
+      const profile = provider.profile_id ? profilesMap.get(provider.profile_id) : null;
+      const availability = buildAvailabilityByDate(
+        availabilityByProviderId.get(provider.id) ?? [],
+        bookingsByProviderId.get(provider.id) ?? [],
+      );
+
+      providerMap.set(provider.id, mapProvider(provider, profile, availability));
+    }
+
+    const upcomingAppointments: UpcomingAppointment[] = upcomingAppointmentsRows.flatMap((appointment) => {
+      const provider = providerMap.get(appointment.provider_id);
+
+      if (!provider) {
+        return [];
+      }
+
+      return [
+        {
+          id: appointment.id,
+          patientId: appointment.patient_id,
+          providerId: appointment.provider_id,
+          providerName: provider.fullName,
+          providerSpecialty: provider.specialtyLabel,
+          providerAvatarUrl: provider.avatarUrl ?? undefined,
+          scheduledAt: appointment.scheduled_at,
+          durationMinutes: appointment.duration_minutes ?? 30,
+          type: appointment.type,
+          status: appointment.status,
+          chiefComplaint: appointment.chief_complaint ?? "General follow-up",
+          videoRoomUrl: appointment.video_room_url ?? undefined,
+          notes: appointment.notes ?? undefined,
+          paymentMethod: (appointment.payment_method as Appointment["paymentMethod"]) ?? undefined,
+          startedAt: appointment.started_at ?? undefined,
+          conversationId: provider.profileId ? conversationMap.get(provider.profileId) : undefined,
+        },
+      ];
+    });
+
+    const bookingProviders = bookableProviderRows
+      .map((provider) => providerMap.get(provider.id))
+      .filter((provider): provider is BookingProvider => Boolean(provider));
+
+    return {
+      currentUserId: user.id,
+      upcomingAppointments,
+      bookingProviders,
+    };
+  } catch (error) {
+    console.error("Appointments page data error:", {
+      userId: user.id,
+      message: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
+
+    return {
+      currentUserId: user.id,
+      upcomingAppointments: [],
+      bookingProviders: [],
+    };
+  }
 }
 
 export async function getAvailableSlotsForProvider(providerId: string, excludedAppointmentId?: string) {
