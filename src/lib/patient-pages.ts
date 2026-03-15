@@ -410,68 +410,98 @@ export async function getPatientSupportGroupsPageData(): Promise<SupportGroupsPa
     throw new Error("Authenticated patient required.");
   }
 
-  const admin = getSupabaseAdminClient() as unknown as MinimalAdminClient;
+  try {
+    const supabase = await getSupabaseServerClient();
+    const admin = (() => {
+      try {
+        return getSupabaseAdminClient() as unknown as MinimalAdminClient;
+      } catch (error) {
+        console.error("Support groups admin fallback unavailable:", error);
+        return null;
+      }
+    })();
 
-  const groupsResult = await admin
-    .from("support_groups")
-    .select("id, name, description, category, moderator_id, active, created_at")
-    .eq("active", true)
-    .order("created_at", { ascending: false });
+    const groupsResult = await supabase
+      .from("support_groups")
+      .select("id, name, description, category, moderator_id, active, created_at")
+      .eq("active", true)
+      .order("created_at", { ascending: false });
 
-  if (groupsResult.error) {
-    throw new Error(groupsResult.error.message);
-  }
+    if (groupsResult.error) {
+      console.error("Support groups query failed:", groupsResult.error.message);
+      return { myGroups: [], groups: [] };
+    }
 
-  const groups = (groupsResult.data ?? []) as Array<Record<string, unknown>>;
-  if (!groups.length) {
+    const groups = (groupsResult.data ?? []) as Array<Record<string, unknown>>;
+    if (!groups.length) {
+      return { myGroups: [], groups: [] };
+    }
+
+    const membershipResult = await supabase
+      .from("support_group_members")
+      .select("group_id, user_id");
+
+    if (membershipResult.error && !isMissingRelationError(membershipResult.error, "support_group_members")) {
+      console.error("Support group memberships query failed:", membershipResult.error.message);
+      return {
+        myGroups: [],
+        groups: groups.map((group) => ({
+          id: String(group.id),
+          name: String(group.name ?? "Support group"),
+          description: String(group.description ?? "Moderated support group."),
+          category: String(group.category ?? "general"),
+          moderatorName: "Maven moderator",
+          memberCount: 0,
+          joined: false,
+        })),
+      };
+    }
+
+    const memberships = (membershipResult.data ?? []) as Array<Record<string, unknown>>;
+    const memberCountByGroup = new Map<string, number>();
+    const joinedGroupIds = new Set<string>();
+    for (const membership of memberships) {
+      const groupId = typeof membership.group_id === "string" ? membership.group_id : null;
+      const memberUserId = typeof membership.user_id === "string" ? membership.user_id : null;
+      if (!groupId) continue;
+      memberCountByGroup.set(groupId, (memberCountByGroup.get(groupId) ?? 0) + 1);
+      if (memberUserId === user.id) {
+        joinedGroupIds.add(groupId);
+      }
+    }
+
+    const moderatorIds = Array.from(new Set(groups.map((group) => group.moderator_id).filter((value): value is string => typeof value === "string")));
+    let moderatorProfilesResult: AdminQueryResolved = { data: [], error: null };
+    if (moderatorIds.length) {
+      moderatorProfilesResult = admin
+        ? await (admin.from("profiles").select("id, full_name").in("id", moderatorIds) as unknown as AdminQueryResult)
+        : await (supabase.from("profiles").select("id, full_name").in("id", moderatorIds) as unknown as AdminQueryResult);
+    }
+
+    if (moderatorProfilesResult.error) {
+      console.error("Support group moderator lookup failed:", moderatorProfilesResult.error.message);
+      moderatorProfilesResult = { data: [], error: null };
+    }
+
+    const moderatorMap = new Map(((moderatorProfilesResult.data ?? []) as Array<Record<string, unknown>>).map((profile) => [String(profile.id), String(profile.full_name ?? "Maven moderator")]));
+    const items = groups.map((group) => ({
+      id: String(group.id),
+      name: String(group.name ?? "Support group"),
+      description: String(group.description ?? "Moderated support group."),
+      category: String(group.category ?? "general"),
+      moderatorName: moderatorMap.get(String(group.moderator_id ?? "")) ?? "Maven moderator",
+      memberCount: memberCountByGroup.get(String(group.id)) ?? 0,
+      joined: joinedGroupIds.has(String(group.id)),
+    }));
+
+    return {
+      myGroups: items.filter((group) => group.joined),
+      groups: items,
+    };
+  } catch (error) {
+    console.error("getPatientSupportGroupsPageData unexpected error:", error);
     return { myGroups: [], groups: [] };
   }
-
-  const membershipResult = await (admin
-    .from("support_group_members")
-    .select("group_id, user_id", { count: "exact" }) as unknown as AdminQueryResult);
-
-  if (membershipResult.error && !isMissingRelationError(membershipResult.error, "support_group_members")) {
-    throw new Error(membershipResult.error.message);
-  }
-
-  const memberships = (membershipResult.data ?? []) as Array<Record<string, unknown>>;
-  const memberCountByGroup = new Map<string, number>();
-  const joinedGroupIds = new Set<string>();
-  for (const membership of memberships) {
-    const groupId = typeof membership.group_id === "string" ? membership.group_id : null;
-    const memberUserId = typeof membership.user_id === "string" ? membership.user_id : null;
-    if (!groupId) continue;
-    memberCountByGroup.set(groupId, (memberCountByGroup.get(groupId) ?? 0) + 1);
-    if (memberUserId === user.id) {
-      joinedGroupIds.add(groupId);
-    }
-  }
-
-  const moderatorIds = Array.from(new Set(groups.map((group) => group.moderator_id).filter((value): value is string => typeof value === "string")));
-  const moderatorProfilesResult: AdminQueryResolved = moderatorIds.length
-    ? await (admin.from("profiles").select("id, full_name").in("id", moderatorIds) as unknown as AdminQueryResult)
-    : { data: [], error: null };
-
-  if (moderatorProfilesResult.error) {
-    throw new Error(moderatorProfilesResult.error.message);
-  }
-
-  const moderatorMap = new Map(((moderatorProfilesResult.data ?? []) as Array<Record<string, unknown>>).map((profile) => [String(profile.id), String(profile.full_name ?? "Maven moderator")]));
-  const items = groups.map((group) => ({
-    id: String(group.id),
-    name: String(group.name ?? "Support group"),
-    description: String(group.description ?? "Moderated support group."),
-    category: String(group.category ?? "general"),
-    moderatorName: moderatorMap.get(String(group.moderator_id ?? "")) ?? "Maven moderator",
-    memberCount: memberCountByGroup.get(String(group.id)) ?? 0,
-    joined: joinedGroupIds.has(String(group.id)),
-  }));
-
-  return {
-    myGroups: items.filter((group) => group.joined),
-    groups: items,
-  };
 }
 
 export async function getPatientInsurancePageData(): Promise<InsurancePageData> {
@@ -480,58 +510,91 @@ export async function getPatientInsurancePageData(): Promise<InsurancePageData> 
     throw new Error("Authenticated patient required.");
   }
 
-  const admin = getSupabaseAdminClient() as unknown as MinimalAdminClient;
-  const [profileResult, claimsResult] = await Promise.all([
-    admin
-      .from("profiles")
-      .select("insurance_carrier, insurance_member_id, insurance_group_number")
-      .eq("id", user.id)
-      .maybeSingle(),
-    admin
-      .from("insurance_claims")
-      .select("id, patient_id, provider_id, service_name, amount_cents, status, created_at")
-      .eq("patient_id", user.id)
-      .order("created_at", { ascending: false }),
-  ]);
+  try {
+    const supabase = await getSupabaseServerClient();
+    const admin = (() => {
+      try {
+        return getSupabaseAdminClient() as unknown as MinimalAdminClient;
+      } catch (error) {
+        console.error("Insurance admin fallback unavailable:", error);
+        return null;
+      }
+    })();
 
-  if (profileResult.error) {
-    throw new Error(profileResult.error.message);
-  }
+    const [profileResult, claimsResult] = await Promise.all([
+      supabase
+        .from("profiles")
+        .select("insurance_carrier, insurance_member_id, insurance_group_number")
+        .eq("id", user.id)
+        .maybeSingle(),
+      supabase
+        .from("insurance_claims")
+        .select("id, patient_id, provider_id, service_name, amount_cents, status, created_at")
+        .eq("patient_id", user.id)
+        .order("created_at", { ascending: false }),
+    ]);
 
-  if (claimsResult.error && !isMissingRelationError(claimsResult.error, "insurance_claims")) {
-    throw new Error(claimsResult.error.message);
-  }
+    if (profileResult.error) {
+      console.error("Insurance profile query failed:", profileResult.error.message);
+      return { insuranceCarrier: null, insuranceMemberId: null, insuranceGroupNumber: null, claims: [] };
+    }
 
-  const profile = (profileResult.data ?? null) as Record<string, unknown> | null;
-  const claimRows = (claimsResult.data ?? []) as Array<Record<string, unknown>>;
-  const providerIds = Array.from(new Set(claimRows.map((claim) => claim.provider_id).filter((value): value is string => typeof value === "string")));
-  const providersResult: AdminQueryResolved = providerIds.length
-    ? await (admin.from("providers").select("id, profile_id").in("id", providerIds) as unknown as AdminQueryResult)
-    : { data: [], error: null };
-  if (providersResult.error) {
-    throw new Error(providersResult.error.message);
-  }
-  const profileIds = Array.from(new Set(((providersResult.data ?? []) as Array<Record<string, unknown>>).map((provider) => provider.profile_id).filter((value): value is string => typeof value === "string")));
-  const providerProfilesResult: AdminQueryResolved = profileIds.length
-    ? await (admin.from("profiles").select("id, full_name").in("id", profileIds) as unknown as AdminQueryResult)
-    : { data: [], error: null };
-  if (providerProfilesResult.error) {
-    throw new Error(providerProfilesResult.error.message);
-  }
-  const nameMap = new Map(((providerProfilesResult.data ?? []) as Array<Record<string, unknown>>).map((item) => [String(item.id), String(item.full_name ?? "Maven provider")]));
-  const providerMap = new Map(((providersResult.data ?? []) as Array<Record<string, unknown>>).map((item) => [String(item.id), nameMap.get(String(item.profile_id ?? "")) ?? "Maven provider"]));
+    if (claimsResult.error && !isMissingRelationError(claimsResult.error, "insurance_claims")) {
+      console.error("Insurance claims query failed:", claimsResult.error.message);
+      return {
+        insuranceCarrier: typeof profileResult.data?.insurance_carrier === "string" ? profileResult.data.insurance_carrier : null,
+        insuranceMemberId: typeof profileResult.data?.insurance_member_id === "string" ? profileResult.data.insurance_member_id : null,
+        insuranceGroupNumber: typeof profileResult.data?.insurance_group_number === "string" ? profileResult.data.insurance_group_number : null,
+        claims: [],
+      };
+    }
 
-  return {
-    insuranceCarrier: typeof profile?.insurance_carrier === "string" ? profile.insurance_carrier : null,
-    insuranceMemberId: typeof profile?.insurance_member_id === "string" ? profile.insurance_member_id : null,
-    insuranceGroupNumber: typeof profile?.insurance_group_number === "string" ? profile.insurance_group_number : null,
-    claims: claimRows.map((claim) => ({
-      id: String(claim.id),
-      createdAt: String(claim.created_at ?? new Date().toISOString()),
-      providerName: providerMap.get(String(claim.provider_id ?? "")) ?? "Maven provider",
-      service: String(claim.service_name ?? "Consultation"),
-      amountCents: typeof claim.amount_cents === "number" ? claim.amount_cents : 0,
-      status: ["pending", "submitted", "approved", "denied", "paid"].includes(String(claim.status ?? "pending")) ? (String(claim.status ?? "pending") as InsuranceClaimItem["status"]) : "pending",
-    })),
-  };
+    const profile = (profileResult.data ?? null) as Record<string, unknown> | null;
+    const claimRows = (claimsResult.data ?? []) as Array<Record<string, unknown>>;
+    const providerIds = Array.from(new Set(claimRows.map((claim) => claim.provider_id).filter((value): value is string => typeof value === "string")));
+
+    let providersResult: AdminQueryResolved = { data: [], error: null };
+    if (providerIds.length) {
+      providersResult = admin
+        ? await (admin.from("providers").select("id, profile_id").in("id", providerIds) as unknown as AdminQueryResult)
+        : await (supabase.from("providers").select("id, profile_id").in("id", providerIds) as unknown as AdminQueryResult);
+    }
+    if (providersResult.error) {
+      console.error("Insurance provider lookup failed:", providersResult.error.message);
+      providersResult = { data: [], error: null };
+    }
+
+    const profileIds = Array.from(new Set(((providersResult.data ?? []) as Array<Record<string, unknown>>).map((provider) => provider.profile_id).filter((value): value is string => typeof value === "string")));
+    let providerProfilesResult: AdminQueryResolved = { data: [], error: null };
+    if (profileIds.length) {
+      providerProfilesResult = admin
+        ? await (admin.from("profiles").select("id, full_name").in("id", profileIds) as unknown as AdminQueryResult)
+        : await (supabase.from("profiles").select("id, full_name").in("id", profileIds) as unknown as AdminQueryResult);
+    }
+    if (providerProfilesResult.error) {
+      console.error("Insurance provider profile lookup failed:", providerProfilesResult.error.message);
+      providerProfilesResult = { data: [], error: null };
+    }
+
+    const nameMap = new Map(((providerProfilesResult.data ?? []) as Array<Record<string, unknown>>).map((item) => [String(item.id), String(item.full_name ?? "Maven provider")]));
+    const providerMap = new Map(((providersResult.data ?? []) as Array<Record<string, unknown>>).map((item) => [String(item.id), nameMap.get(String(item.profile_id ?? "")) ?? "Maven provider"]));
+
+    return {
+      insuranceCarrier: typeof profile?.insurance_carrier === "string" ? profile.insurance_carrier : null,
+      insuranceMemberId: typeof profile?.insurance_member_id === "string" ? profile.insurance_member_id : null,
+      insuranceGroupNumber: typeof profile?.insurance_group_number === "string" ? profile.insurance_group_number : null,
+      claims: claimRows.map((claim) => ({
+        id: String(claim.id),
+        createdAt: String(claim.created_at ?? new Date().toISOString()),
+        providerName: providerMap.get(String(claim.provider_id ?? "")) ?? "Maven provider",
+        service: String(claim.service_name ?? "Consultation"),
+        amountCents: typeof claim.amount_cents === "number" ? claim.amount_cents : 0,
+        status: ["pending", "submitted", "approved", "denied", "paid"].includes(String(claim.status ?? "pending")) ? (String(claim.status ?? "pending") as InsuranceClaimItem["status"]) : "pending",
+      })),
+    };
+  } catch (error) {
+    console.error("getPatientInsurancePageData unexpected error:", error);
+    return { insuranceCarrier: null, insuranceMemberId: null, insuranceGroupNumber: null, claims: [] };
+  }
 }
+

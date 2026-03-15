@@ -12,7 +12,6 @@ import {
   type MessagingPageData,
   type MessagingRole,
 } from "@/lib/messaging-shared";
-import { getSupabaseAdminClient } from "@/lib/supabase/admin";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 
 export { createConversationSchema, MESSAGE_ATTACHMENT_BUCKET } from "@/lib/messaging-shared";
@@ -587,4 +586,5 @@ export async function getCurrentUserMessagingRole(): Promise<MessagingRole | nul
 
   return data?.role === "provider" ? "provider" : data?.role === "patient" ? "patient" : null;
 }
+
 
