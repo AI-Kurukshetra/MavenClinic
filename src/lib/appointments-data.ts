@@ -84,7 +84,11 @@ async function getProviderProfilesMap(profileIds: string[]) {
     : { data: [], error: null };
 
   if (error) {
-    throw new Error(error.message);
+    console.error("Appointments provider profile lookup failed:", {
+      message: error.message,
+      profileIds,
+    });
+    return new Map<string, ProfileRow>();
   }
 
   return new Map((data as ProfileRow[]).map((profile) => [profile.id, profile]));
@@ -122,7 +126,11 @@ async function getConversationMap(patientId: string, providerProfileIds: string[
     : { data: [], error: null };
 
   if (error) {
-    throw new Error(error.message);
+    console.error("Appointments conversation lookup failed:", {
+      patientId,
+      message: error.message,
+    });
+    return new Map<string, string>();
   }
 
   return new Map((data ?? []).map((conversation) => [conversation.provider_profile_id, conversation.id]));
@@ -503,3 +511,5 @@ export async function getConsultationRoomData(appointmentId: string): Promise<Co
     })),
   };
 }
+
+
