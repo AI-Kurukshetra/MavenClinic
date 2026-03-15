@@ -53,6 +53,8 @@ type ProviderRow = {
   bio: string | null;
   languages: string[] | null;
   accepting_patients: boolean | null;
+  suspended?: boolean | null;
+  approval_status?: string | null;
   consultation_fee_cents: number | null;
   rating: number | null;
   total_reviews: number | null;
@@ -95,47 +97,48 @@ async function getProviderProfilesMap(profileIds: string[]) {
 }
 
 async function getBookableProviderRows() {
+  const admin = getAdminClientSafe();
   const supabase = await getSupabaseServerClient();
+  const providerClient = admin ?? supabase;
 
-  const primaryResult = await supabase
-    .from("providers")
-    .select("id, profile_id, specialty, bio, languages, accepting_patients, consultation_fee_cents, rating, total_reviews")
-    .eq("accepting_patients", true)
-    .is("suspended", null)
-    .order("specialty", { ascending: true });
+  const baseSelect = "id, profile_id, specialty, bio, languages, accepting_patients, consultation_fee_cents, rating, total_reviews, suspended, approval_status";
+  const legacySelect = "id, profile_id, specialty, bio, languages, accepting_patients, consultation_fee_cents, rating, total_reviews";
 
-  if (primaryResult.error) {
-    console.error("Primary bookable providers query failed:", primaryResult.error.message);
+  const primaryResult = await providerClient.from("providers").select(baseSelect).order("specialty", { ascending: true });
+  let providerRows = (primaryResult.data ?? []) as ProviderRow[];
+
+  if (primaryResult.error && (primaryResult.error.message.includes("suspended") || primaryResult.error.message.includes("approval_status"))) {
+    console.error("Bookable providers query hit legacy schema, retrying without optional columns:", primaryResult.error.message);
+    const legacyResult = await providerClient.from("providers").select(legacySelect).order("specialty", { ascending: true });
+
+    if (legacyResult.error) {
+      console.error("Legacy bookable providers query failed:", legacyResult.error.message);
+      return { data: [] as ProviderRow[], error: null };
+    }
+
+    providerRows = (legacyResult.data ?? []) as ProviderRow[];
+  } else if (primaryResult.error) {
+    console.error("Bookable providers query failed:", primaryResult.error.message);
+    return { data: [] as ProviderRow[], error: null };
   }
 
-  if ((primaryResult.data ?? []).length) {
-    return primaryResult;
-  }
+  const strictlyBookable = providerRows.filter(
+    (provider) =>
+      provider.accepting_patients === true &&
+      provider.suspended !== true &&
+      (provider.approval_status == null || provider.approval_status === "approved"),
+  );
 
-  const secondaryResult = await supabase
-    .from("providers")
-    .select("id, profile_id, specialty, bio, languages, accepting_patients, consultation_fee_cents, rating, total_reviews")
-    .eq("accepting_patients", true)
-    .order("specialty", { ascending: true });
+  const acceptingFallback = providerRows.filter((provider) => provider.accepting_patients !== false);
+  const finalProviders = strictlyBookable.length ? strictlyBookable : acceptingFallback.length ? acceptingFallback : providerRows;
 
-  if (secondaryResult.error) {
-    console.error("Secondary bookable providers query failed:", secondaryResult.error.message);
-  }
+  console.log("Providers query result:", {
+    count: finalProviders.length,
+    totalCandidates: providerRows.length,
+    usedAdminClient: Boolean(admin),
+  });
 
-  if ((secondaryResult.data ?? []).length) {
-    return secondaryResult;
-  }
-
-  const fallbackResult = await supabase
-    .from("providers")
-    .select("id, profile_id, specialty, bio, languages, accepting_patients, consultation_fee_cents, rating, total_reviews")
-    .order("specialty", { ascending: true });
-
-  if (fallbackResult.error) {
-    console.error("Fallback bookable providers query failed:", fallbackResult.error.message);
-  }
-
-  return fallbackResult;
+  return { data: finalProviders, error: null };
 }
 function mapProvider(row: ProviderRow, profile?: ProfileRow | null, availability: GeneratedDateSlots[] = []): BookingProvider {
   const nextAvailable = findNextAvailableSlot(availability);
@@ -207,9 +210,6 @@ export async function getAppointmentsPageData(): Promise<AppointmentsPageData> {
       throw new Error(upcomingAppointmentsResult.error.message);
     }
 
-    if (bookableProvidersResult.error) {
-      throw new Error(bookableProvidersResult.error.message);
-    }
 
     const upcomingAppointmentsRows = upcomingAppointmentsResult.data ?? [];
     const bookableProviderRows = (bookableProvidersResult.data ?? []) as ProviderRow[];
@@ -550,6 +550,9 @@ export async function getConsultationRoomData(appointmentId: string): Promise<Co
     })),
   };
 }
+
+
+
 
 
 
