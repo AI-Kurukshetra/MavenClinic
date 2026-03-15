@@ -100,7 +100,6 @@ function normalizeSymptoms(value: unknown): string[] {
 
 async function getProviderMap(ids?: string[]): Promise<Map<string, Provider>> {
   const supabase = await getSupabaseServerClient();
-  const admin = getSupabaseAdminClient();
   let query = supabase
     .from("providers")
     .select("id, specialty, bio, languages, accepting_patients, consultation_fee_cents, rating, total_reviews, profile_id");
@@ -116,15 +115,23 @@ async function getProviderMap(ids?: string[]): Promise<Map<string, Provider>> {
   }
 
   const profileIds = data.map((provider) => provider.profile_id).filter((value): value is string => Boolean(value));
-  const { data: profileRows } = profileIds.length
-    ? await admin.from("profiles").select("id, full_name, avatar_url").in("id", profileIds)
-    : { data: [] as Array<{ id: string; full_name: string | null; avatar_url: string | null }> };
-  const profileMap = new Map((profileRows ?? []).map((profile) => [profile.id, profile]));
+  const profileResult = await (async () => {
+    if (!profileIds.length) {
+      return { data: [] as Array<{ id: string; full_name: string | null; avatar_url: string | null }> };
+    }
+
+    try {
+      return await getSupabaseAdminClient().from("profiles").select("id, full_name, avatar_url").in("id", profileIds);
+    } catch {
+      return await supabase.from("profiles").select("id, full_name, avatar_url").in("id", profileIds);
+    }
+  })();
+  const profileMap = new Map((profileResult.data ?? []).map((profile) => [profile.id, profile]));
 
   return new Map(
     data.map((provider) => {
       const profile = provider.profile_id ? profileMap.get(provider.profile_id) : undefined;
-      const specialtyLabel = provider.specialty.replaceAll("_", " ").replace(/\b\w/g, (char: string) => char.toUpperCase());
+      const specialtyLabel = formatProviderSpecialtyLabel(provider.specialty);
 
       return [
         provider.id,
@@ -132,7 +139,7 @@ async function getProviderMap(ids?: string[]): Promise<Map<string, Provider>> {
           id: provider.id,
           profileId: provider.profile_id ?? undefined,
           fullName: profile?.full_name ?? `${specialtyLabel} specialist`,
-          specialty: provider.specialty as Provider["specialty"],
+          specialty: (provider.specialty ?? "general") as Provider["specialty"],
           specialtyLabel,
           bio: provider.bio ?? "Maven provider",
           languages: provider.languages ?? ["English"],
@@ -432,7 +439,13 @@ function mapProviderCarePlanListItem(
 
 async function getDashboardMessageThreads(userId: string): Promise<MessageThread[]> {
   const supabase = await getSupabaseServerClient();
-  const admin = getSupabaseAdminClient();
+  const admin = (() => {
+    try {
+      return getSupabaseAdminClient();
+    } catch {
+      return null;
+    }
+  })();
   const { data: conversations, error: conversationsError } = await supabase
     .from("conversations")
     .select("id, provider_profile_id")
@@ -454,11 +467,11 @@ async function getDashboardMessageThreads(userId: string): Promise<MessageThread
 
   const [providerProfilesResult, providerRowsResult, messageRowsResult] = await Promise.all([
     providerProfileIds.length
-      ? admin.from("profiles").select("id, full_name, avatar_url").in("id", providerProfileIds)
+      ? (admin ?? supabase).from("profiles").select("id, full_name, avatar_url").in("id", providerProfileIds)
       : Promise.resolve({ data: [] as Array<{ id: string; full_name: string | null; avatar_url: string | null }>, error: null }),
     providerProfileIds.length
-      ? admin.from("providers").select("profile_id, specialty").in("profile_id", providerProfileIds)
-      : Promise.resolve({ data: [] as Array<{ profile_id: string | null; specialty: string }>, error: null }),
+      ? (admin ?? supabase).from("providers").select("profile_id, specialty").in("profile_id", providerProfileIds)
+      : Promise.resolve({ data: [] as Array<{ profile_id: string | null; specialty: string | null }>, error: null }),
     supabase
       .from("messages")
       .select("id, conversation_id, sender_id, content, read_at, created_at")
@@ -473,7 +486,7 @@ async function getDashboardMessageThreads(userId: string): Promise<MessageThread
   const profileMap = new Map((providerProfilesResult.data ?? []).map((profile) => [profile.id, profile]));
   const providerMetaMap = new Map(
     (providerRowsResult.data ?? [])
-      .filter((provider): provider is { profile_id: string; specialty: string } => Boolean(provider.profile_id))
+      .filter((provider): provider is { profile_id: string; specialty: string | null } => Boolean(provider.profile_id))
       .map((provider) => [provider.profile_id, provider]),
   );
   const unreadCountByConversation = new Map<string, number>();
@@ -2938,5 +2951,6 @@ export async function getEmployerAdvancedAnalyticsData(rangeInput?: string): Pro
     monthlyComparison,
   };
 }
+
 
 
