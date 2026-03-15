@@ -97,14 +97,30 @@ export async function getCurrentProfile(userId?: string): Promise<ProfileRow | n
       .maybeSingle();
 
     if (error) {
-      console.error("getCurrentProfile error:", error.message);
-      return null;
+      throw error;
     }
 
     return (data as ProfileRow | null) ?? null;
-  } catch (err) {
-    console.error("getCurrentProfile failed:", err);
-    return null;
+  } catch (adminErr) {
+    console.error("Admin client failed, trying regular:", adminErr);
+
+    try {
+      const supabase = await getSupabaseServerClient();
+      const { data, error } = await supabase
+        .from("profiles")
+        .select("id, role, full_name, date_of_birth, onboarding_complete, employer_id")
+        .eq("id", currentUserId)
+        .maybeSingle();
+
+      if (error) {
+        throw error;
+      }
+
+      return (data as ProfileRow | null) ?? null;
+    } catch (fallbackErr) {
+      console.error("Both clients failed:", fallbackErr);
+      return null;
+    }
   }
 }
 
@@ -132,7 +148,6 @@ export async function getCurrentProfileWithSync(user: User): Promise<ProfileRow 
   const profile = await getCurrentProfile(user.id);
 
   if (!profile) {
-    console.error("Profile not found for user:", user.id);
     return null;
   }
 

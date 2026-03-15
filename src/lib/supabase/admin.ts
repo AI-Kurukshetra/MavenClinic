@@ -795,12 +795,23 @@ type AdminDatabase = {
 let adminClient: ReturnType<typeof createClient<AdminDatabase>> | undefined;
 
 export function getSupabaseAdminClient() {
-  if (!serverEnv.SUPABASE_SERVICE_ROLE_KEY) {
-    throw new Error("Missing required environment variable: SUPABASE_SERVICE_ROLE_KEY");
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? publicEnv.NEXT_PUBLIC_SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY ?? serverEnv.SUPABASE_SERVICE_ROLE_KEY;
+
+  console.log("Admin client init:", {
+    hasUrl: Boolean(url),
+    hasKey: Boolean(key),
+    urlPrefix: url ? url.substring(0, 30) : null,
+    keyPrefix: key ? key.substring(0, 20) : null,
+  });
+
+  if (!url || !key) {
+    console.error("CRITICAL: Admin client missing env vars");
+    throw new Error("Admin client configuration missing");
   }
 
   if (!adminClient) {
-    adminClient = createClient<AdminDatabase>(publicEnv.NEXT_PUBLIC_SUPABASE_URL, serverEnv.SUPABASE_SERVICE_ROLE_KEY, {
+    adminClient = createClient<AdminDatabase>(url, key, {
       auth: {
         autoRefreshToken: false,
         persistSession: false,
@@ -810,6 +821,7 @@ export function getSupabaseAdminClient() {
 
   return adminClient;
 }
+
 
 
 
