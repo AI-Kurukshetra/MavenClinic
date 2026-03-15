@@ -1,4 +1,4 @@
-import { redirect } from "next/navigation";
+﻿import { redirect } from "next/navigation";
 import type { User } from "@supabase/supabase-js";
 import {
   getAuthenticatedRedirectPath as getRoleRedirectPath,
@@ -37,12 +37,12 @@ function getUserDisplayName(user: User) {
   );
 }
 
+function resolveRole(value: unknown): AppRole | null {
+  return typeof value === "string" && validRoles.has(value as AppRole) ? (value as AppRole) : null;
+}
 
 function resolveRoleFromUser(user: User) {
   return resolveRole(user.user_metadata?.role) ?? resolveRole(user.app_metadata?.role);
-}
-function resolveRole(value: unknown): AppRole | null {
-  return typeof value === "string" && validRoles.has(value as AppRole) ? (value as AppRole) : null;
 }
 
 function hasCompletedOnboardingMetadata(user: User) {
@@ -106,33 +106,33 @@ export async function getCurrentProfile(userId?: string): Promise<ProfileRow | n
     return null;
   }
 
-  try {
-    const admin = getSupabaseAdminClient();
-    const { data, error } = await admin
-      .from("profiles")
-      .select("id, role, full_name, date_of_birth, onboarding_complete, employer_id")
-      .eq("id", currentUserId)
-      .maybeSingle();
-
-    if (!error) {
-      return data as ProfileRow | null;
-    }
-  } catch {
-    // Fall back to the session client when the service role is unavailable.
-  }
-
   const supabase = await getSupabaseServerClient();
-  const { data, error } = await supabase
+  const { data: profile, error } = await supabase
     .from("profiles")
     .select("id, role, full_name, date_of_birth, onboarding_complete, employer_id")
     .eq("id", currentUserId)
     .maybeSingle();
 
-  if (error) {
-    return null;
+  if (!error && profile) {
+    return profile as ProfileRow;
   }
 
-  return data as ProfileRow | null;
+  try {
+    const admin = getSupabaseAdminClient();
+    const { data: adminProfile, error: adminError } = await admin
+      .from("profiles")
+      .select("id, role, full_name, date_of_birth, onboarding_complete, employer_id")
+      .eq("id", currentUserId)
+      .maybeSingle();
+
+    if (!adminError) {
+      return adminProfile as ProfileRow | null;
+    }
+  } catch {
+    // Fall back to the session result when the service role is unavailable.
+  }
+
+  return error ? null : (profile as ProfileRow | null);
 }
 
 export async function ensureProfileForUser(user: User) {
@@ -160,6 +160,15 @@ export async function ensureProfileForUser(user: User) {
 
 export async function getCurrentProfileWithSync(user: User): Promise<ProfileRow | null> {
   const profile = await getCurrentProfile(user.id);
+  const metadataRole = resolveRoleFromUser(user);
+  const resolvedRole = profile?.role ?? metadataRole ?? "patient";
+
+  console.log("Profile sync:", {
+    userId: user.id,
+    dbRole: profile?.role ?? null,
+    metaRole: metadataRole,
+    finalRole: resolvedRole,
+  });
 
   if (profile?.onboarding_complete || isRoleOnboardingExempt(profile?.role)) {
     return profile;
@@ -173,6 +182,7 @@ export async function getCurrentProfileWithSync(user: User): Promise<ProfileRow 
   }
 
   const fallbackProfile = buildFallbackProfile(user, profile);
+  fallbackProfile.role = resolvedRole;
   const profileWriter = (() => {
     try {
       return getSupabaseAdminClient();
@@ -208,4 +218,3 @@ export async function requireUser() {
 
   return user;
 }
-

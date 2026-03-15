@@ -1,4 +1,4 @@
-import Link from "next/link";
+﻿import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getAuthenticatedRedirectPath, getCurrentProfile, getCurrentProfileWithSync } from "@/lib/auth";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
@@ -50,8 +50,17 @@ export default async function ProtectedDashboardLayout({ children }: { children:
 
   const syncedProfile = (await getCurrentProfileWithSync(session.user)) ?? profile;
 
-  if (syncedProfile.role && syncedProfile.role !== "patient") {
-    redirect(getAuthenticatedRedirectPath(syncedProfile));
+  // Only redirect away if role is explicitly a non-patient role
+  // AND we are confident in the data.
+  const confirmedRole = syncedProfile.role ?? profile?.role;
+  if (confirmedRole && confirmedRole !== "patient" && confirmedRole !== null && confirmedRole !== undefined) {
+    console.log("Dashboard layout redirecting role:", confirmedRole);
+    redirect(
+      getAuthenticatedRedirectPath({
+        ...syncedProfile,
+        role: confirmedRole,
+      }),
+    );
   }
 
   if (!syncedProfile.onboarding_complete) {
