@@ -1,4 +1,4 @@
-import type { User } from "@supabase/supabase-js";
+﻿import type { User } from "@supabase/supabase-js";
 import type { AppRole } from "@/lib/roles";
 import { apiError } from "@/lib/api-response";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
@@ -15,19 +15,41 @@ export type ApiAuthContext = {
   profile: ApiProfile | null;
 };
 
+function isMissingColumnError(error: { message?: string } | null, columnName: string) {
+  return Boolean(error?.message?.includes(`Could not find the '${columnName}' column`));
+}
+
 async function getProfileForUser(userId: string) {
   const supabase = await getSupabaseServerClient();
-  const { data, error } = await supabase
+  const primaryResult = await supabase
     .from("profiles")
     .select("id, role, employer_id")
     .eq("id", userId)
     .maybeSingle();
 
-  if (error) {
+  if (!isMissingColumnError(primaryResult.error, "employer_id")) {
+    if (primaryResult.error) {
+      return { supabase, profile: null as ApiProfile | null, error: apiError(500, "profile_lookup_failed", "Unable to verify your account.") };
+    }
+
+    return { supabase, profile: (primaryResult.data as ApiProfile | null) ?? null, error: null };
+  }
+
+  const fallbackResult = await supabase
+    .from("profiles")
+    .select("id, role")
+    .eq("id", userId)
+    .maybeSingle();
+
+  if (fallbackResult.error) {
     return { supabase, profile: null as ApiProfile | null, error: apiError(500, "profile_lookup_failed", "Unable to verify your account.") };
   }
 
-  return { supabase, profile: (data as ApiProfile | null) ?? null, error: null };
+  const profile = fallbackResult.data
+    ? ({ ...(fallbackResult.data as Omit<ApiProfile, "employer_id">), employer_id: null } satisfies ApiProfile)
+    : null;
+
+  return { supabase, profile, error: null };
 }
 
 export async function requireApiUser() {
