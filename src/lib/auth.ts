@@ -1,4 +1,4 @@
-﻿import { redirect } from "next/navigation";
+import { redirect } from "next/navigation";
 import type { User } from "@supabase/supabase-js";
 import {
   getAuthenticatedRedirectPath as getRoleRedirectPath,
@@ -37,6 +37,10 @@ function getUserDisplayName(user: User) {
   );
 }
 
+
+function resolveRoleFromUser(user: User) {
+  return resolveRole(user.user_metadata?.role) ?? resolveRole(user.app_metadata?.role);
+}
 function resolveRole(value: unknown): AppRole | null {
   return typeof value === "string" && validRoles.has(value as AppRole) ? (value as AppRole) : null;
 }
@@ -79,7 +83,7 @@ function hasCompletedOnboardingProfileData(profile: ProfileRow | null) {
 function buildFallbackProfile(user: User, profile?: ProfileRow | null): ProfileRow {
   return {
     id: user.id,
-    role: profile?.role ?? resolveRole(user.user_metadata?.role) ?? "patient",
+    role: profile?.role ?? resolveRoleFromUser(user) ?? "patient",
     full_name: profile?.full_name ?? getUserDisplayName(user),
     date_of_birth: profile?.date_of_birth ?? null,
     onboarding_complete: true,
@@ -150,7 +154,7 @@ export async function ensureProfileForUser(user: User) {
     id: user.id,
     full_name: existingProfile?.full_name ?? getUserDisplayName(user),
     onboarding_complete: onboardingComplete,
-    role: existingProfile?.role ?? resolveRole(user.user_metadata?.role) ?? "patient",
+    role: existingProfile?.role ?? resolveRoleFromUser(user) ?? "patient",
   });
 }
 
@@ -204,3 +208,4 @@ export async function requireUser() {
 
   return user;
 }
+

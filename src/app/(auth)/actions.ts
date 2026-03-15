@@ -106,6 +106,7 @@ export async function signupAction(formData: FormData) {
       emailRedirectTo: `${publicEnv.NEXT_PUBLIC_APP_URL}/dashboard`,
       data: {
         full_name: fullName,
+        role: "patient",
         ...(invitedEmployerId ? { employerId: invitedEmployerId } : {}),
       },
     },
@@ -183,6 +184,8 @@ export async function registerProviderAction(formData: FormData) {
     email_confirm: true,
     user_metadata: {
       full_name: fullName,
+      role: "provider",
+      approvalStatus: "pending",
       onboardingComplete: true,
     },
   });
@@ -298,6 +301,7 @@ export async function registerEmployerAction(formData: FormData) {
     email_confirm: true,
     user_metadata: {
       full_name: fullName,
+      role: "employer_admin",
       onboardingComplete: true,
     },
   });
@@ -453,6 +457,7 @@ export async function logoutAction() {
   await supabase.auth.signOut();
   redirect("/login?message=You have been signed out." as Route);
 }
+
 
 
 

@@ -1,4 +1,4 @@
-import { NextResponse, type NextRequest } from "next/server";
+﻿import { NextResponse, type NextRequest } from "next/server";
 import type { User } from "@supabase/supabase-js";
 import { createServerClient } from "@supabase/ssr";
 import { publicEnv } from "@/lib/env";
@@ -7,11 +7,6 @@ import {
   patientRoutePrefixes,
   type AppRole,
 } from "@/lib/roles";
-
-type MiddlewareProfile = {
-  role: AppRole | null;
-  onboarding_complete: boolean | null;
-};
 
 type RouteRule = {
   prefix: string;
@@ -55,6 +50,10 @@ function getRequiredRoles(pathname: string) {
 
 function resolveRole(value: unknown): AppRole | null {
   return typeof value === "string" && validRoles.has(value as AppRole) ? (value as AppRole) : null;
+}
+
+function resolveRoleFromUser(user: User) {
+  return resolveRole(user.user_metadata?.role) ?? resolveRole(user.app_metadata?.role);
 }
 
 function hasCompletedOnboardingMetadata(user: User) {
@@ -183,6 +182,23 @@ function redirectLoopResponse(request: NextRequest) {
   return response;
 }
 
+function handleRoleRedirect(request: NextRequest, redirectCount: number, role: AppRole, onboardingComplete: boolean) {
+  const pathname = request.nextUrl.pathname;
+  const defaultRedirect =
+    role === "patient" ? (onboardingComplete ? "/dashboard" : "/onboarding") : getAuthenticatedRedirectPath({ role });
+
+  if (pathname === "/" || isAuthEntryPath(pathname)) {
+    return redirectTo(request, defaultRedirect, redirectCount, role);
+  }
+
+  if (role === "patient" && pathname === "/onboarding" && onboardingComplete) {
+    return redirectTo(request, "/dashboard", redirectCount, role);
+  }
+
+  logMiddlewareDecision(pathname, role, null);
+  return null;
+}
+
 export async function updateSession(request: NextRequest) {
   let response = NextResponse.next({ request });
 
@@ -230,67 +246,24 @@ export async function updateSession(request: NextRequest) {
     return clearRedirectCount(applySecurityHeaders(response, pathname));
   }
 
-  const { data: profileData, error: profileError } = await supabase
-    .from("profiles")
-    .select("role, onboarding_complete")
-    .eq("id", user.id)
-    .maybeSingle();
+  const role = resolveRoleFromUser(user);
+  const onboardingComplete = hasCompletedOnboardingMetadata(user);
 
-  const databaseRole = (profileData?.role as AppRole | null) ?? null;
-  const metadataRole = resolveRole(user.user_metadata?.role);
-  const role = databaseRole ?? (requiredRoles ? metadataRole : patientAppPath || onboardingPath ? "patient" : metadataRole);
-  const profile: MiddlewareProfile | null = {
-    role,
-    onboarding_complete: profileData?.onboarding_complete ?? hasCompletedOnboardingMetadata(user),
-  };
-
-  if (profileError) {
-    console.error("Middleware profile lookup error:", {
-      path: pathname,
-      userId: user.id,
-      message: profileError.message,
-    });
-  }
-
-  if (isAuthEntryPath(pathname)) {
-    return redirectTo(request, getAuthenticatedRedirectPath(profile), redirectCount, profile.role);
-  }
-
-  if (onboardingPath) {
-    if (profile.role && profile.role !== "patient") {
-      return redirectTo(request, getAuthenticatedRedirectPath(profile), redirectCount, profile.role);
-    }
-
-    if (profile.onboarding_complete) {
-      return redirectTo(request, "/dashboard", redirectCount, profile.role);
-    }
-
-    logMiddlewareDecision(pathname, profile.role, null);
+  if (!role) {
+    logMiddlewareDecision(pathname, null, null);
     return clearRedirectCount(applySecurityHeaders(response, pathname));
   }
 
-  if (patientAppPath) {
-    if (profile.role === "patient") {
-      if (!profile.onboarding_complete && pathname !== "/dashboard") {
-        return redirectTo(request, "/onboarding", redirectCount, profile.role);
-      }
+  const roleRedirect = handleRoleRedirect(request, redirectCount, role, onboardingComplete);
+  if (roleRedirect) {
+    return roleRedirect;
+  }
 
-      logMiddlewareDecision(pathname, profile.role, null);
-      return clearRedirectCount(applySecurityHeaders(response, pathname));
-    }
-
-    if (databaseRole && databaseRole !== "patient") {
-      return redirectTo(request, getAuthenticatedRedirectPath(profile), redirectCount, profile.role);
-    }
-
-    logMiddlewareDecision(pathname, profile.role, null);
+  if (requiredRoles && !requiredRoles.includes(role)) {
+    logMiddlewareDecision(pathname, role, null);
     return clearRedirectCount(applySecurityHeaders(response, pathname));
   }
 
-  if (requiredRoles && !requiredRoles.includes((profile.role as AppRole | null) ?? "patient")) {
-    return redirectTo(request, getAuthenticatedRedirectPath(profile), redirectCount, profile.role);
-  }
-
-  logMiddlewareDecision(pathname, profile.role, null);
+  logMiddlewareDecision(pathname, role, null);
   return clearRedirectCount(applySecurityHeaders(response, pathname));
 }

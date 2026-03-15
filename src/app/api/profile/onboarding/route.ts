@@ -87,3 +87,4 @@ export async function POST(request: Request) {
     return apiError(500, "onboarding_save_failed", "Unable to save onboarding details.");
   }
 }
+
