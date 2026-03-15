@@ -39,6 +39,10 @@ export function isRoleOnboardingExempt(role?: string | null) {
 }
 
 export function getAuthenticatedRedirectPath(profile: RoleAwareProfile | null) {
+  if (profile?.role === "patient") {
+    return profile.onboarding_complete ? "/dashboard" : "/onboarding";
+  }
+
   if (profile?.role === "provider") {
     return "/provider/dashboard";
   }
@@ -59,5 +63,5 @@ export function getAuthenticatedRedirectPath(profile: RoleAwareProfile | null) {
     return "/partner/dashboard";
   }
 
-  return profile?.onboarding_complete ? "/dashboard" : "/onboarding";
+  return profile?.onboarding_complete ? "/dashboard" : "/dashboard";
 }

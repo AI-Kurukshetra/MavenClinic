@@ -1,10 +1,10 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { Suspense } from "react";
 import { CalendarClock, MessageCircleMore, Video } from "lucide-react";
 import { DashboardInsightCard } from "@/components/health/dashboard-insight-card";
 import { DashboardShell } from "@/components/health/dashboard-shell";
-import { SkeletonCard } from "@/components/health/skeleton-card";
 import { AppointmentCard } from "@/components/ui/appointment-card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -12,16 +12,50 @@ import { Card } from "@/components/ui/card";
 import { ProgressRing } from "@/components/ui/progress-ring";
 import { Toast } from "@/components/ui/Toast";
 import { getPatientDashboardData } from "@/lib/data";
+import { getSupabaseServerClient } from "@/lib/supabase/server";
 import { formatDate, formatDateTime, formatRelativeTime } from "@/lib/utils";
 
 export const metadata: Metadata = {
-  title: "Dashboard — Maven Clinic",
+  title: "Dashboard - Maven Clinic",
 };
 
 export const revalidate = 0;
 
-async function DashboardContent() {
-  const data = await getPatientDashboardData();
+type DashboardData = Awaited<ReturnType<typeof getPatientDashboardData>>;
+
+type SearchParams = Promise<Record<string, string | string[] | undefined>>;
+
+const dashboardToastMessages: Record<string, string> = {
+  "consultation-complete": "Consultation complete.",
+};
+
+function DashboardLoadingState() {
+  return (
+    <div className="flex min-h-[420px] items-center justify-center rounded-[28px] border border-[var(--border)] bg-white/70 px-6 py-12 text-center">
+      <div>
+        <div className="mx-auto mb-4 h-8 w-8 animate-spin rounded-full border-2 border-[var(--rose-500)] border-t-transparent" />
+        <p className="text-sm text-[var(--foreground-muted)]">Loading your dashboard...</p>
+      </div>
+    </div>
+  );
+}
+
+function DashboardErrorState() {
+  return (
+    <div className="rounded-[28px] border border-[rgba(212,88,123,0.14)] bg-[var(--rose-50)] px-6 py-8">
+      <h2 className="text-2xl font-semibold text-[var(--foreground)]">Dashboard loading error</h2>
+      <p className="mt-3 max-w-xl text-sm leading-7 text-[var(--foreground-muted)]">
+        We could not load your dashboard right now. Please refresh the page, or open another area like appointments or messages while we retry.
+      </p>
+      <div className="mt-5 flex flex-wrap gap-3">
+        <Link href="/appointments"><Button>Open appointments</Button></Link>
+        <Link href="/messages"><Button variant="secondary">Open messages</Button></Link>
+      </div>
+    </div>
+  );
+}
+
+function DashboardContent({ data }: { data: DashboardData }) {
   const unreadMessages = data.messages.reduce((sum, thread) => sum + thread.unreadCount, 0);
 
   return (
@@ -178,7 +212,7 @@ async function DashboardContent() {
               ))}
             </div>
           ) : (
-            <p className="text-sm text-[var(--foreground-muted)]">No conversation activity yet. When your care team writes back, unread counts will appear here based on `read_at`.</p>
+            <p className="text-sm text-[var(--foreground-muted)]">No conversation activity yet. When your care team writes back, unread counts will appear here based on read_at.</p>
           )}
         </Card>
 
@@ -188,24 +222,49 @@ async function DashboardContent() {
   );
 }
 
-const dashboardToastMessages: Record<string, string> = {
-  "consultation-complete": "Consultation complete.",
-};
+async function DashboardContentLoader({ userId }: { userId: string }) {
+  let data: DashboardData;
+
+  try {
+    data = await getPatientDashboardData(userId);
+  } catch (error) {
+    console.error("Dashboard error:", error);
+    return <DashboardErrorState />;
+  }
+
+  return <DashboardContent data={data} />;
+}
 
 export default async function DashboardPage({
   searchParams,
 }: {
-  searchParams: Promise<Record<string, string | string[] | undefined>>;
+  searchParams: SearchParams;
 }) {
+  const supabase = await getSupabaseServerClient();
+  const {
+    data: { session },
+    error,
+  } = await supabase.auth.getSession();
+
+  if (error) {
+    console.error("Dashboard session error:", error);
+    redirect("/login");
+  }
+
+  if (!session) {
+    redirect("/login");
+  }
+
   const params = await searchParams;
   const toast = typeof params.toast === "string" ? dashboardToastMessages[params.toast] ?? null : null;
 
   return (
     <DashboardShell title="Patient dashboard" eyebrow="Daily home">
       {toast ? <Toast message={toast} variant="success" /> : null}
-      <Suspense fallback={<div className="grid gap-6 xl:grid-cols-[1.2fr_0.8fr]"><SkeletonCard /><SkeletonCard /></div>}>
-        <DashboardContent />
+      <Suspense fallback={<DashboardLoadingState />}>
+        <DashboardContentLoader userId={session.user.id} />
       </Suspense>
     </DashboardShell>
   );
 }
+

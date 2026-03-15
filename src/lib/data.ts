@@ -537,18 +537,19 @@ async function getDashboardMessageThreads(userId: string): Promise<MessageThread
   });
 }
 
-async function getRealProfile() {
-  const user = await getCurrentUser();
+async function getRealProfile(userId?: string) {
+  const user = userId ? null : await getCurrentUser();
+  const currentUserId = userId ?? user?.id;
 
-  if (!user) {
+  if (!currentUserId) {
     throw new Error("Authenticated patient required.");
   }
 
-  const profile = await getCurrentProfile(user.id);
-  const fullName = profile?.full_name ?? user.user_metadata?.full_name ?? user.email?.split("@")[0] ?? "Maven user";
+  const profile = await getCurrentProfile(currentUserId);
+  const fullName = profile?.full_name ?? user?.user_metadata?.full_name ?? user?.email?.split("@")[0] ?? "Maven user";
 
   return {
-    id: user.id,
+    id: currentUserId,
     role: profile?.role ?? "patient",
     fullName,
     firstName: fullName.split(" ")[0] ?? fullName,
@@ -556,14 +557,14 @@ async function getRealProfile() {
   };
 }
 
-export async function getPatientDashboardData() {
-  const user = await getCurrentUser();
+export async function getPatientDashboardData(userId?: string) {
+  const currentUserId = userId ?? (await getCurrentUser())?.id;
 
-  if (!user) {
+  if (!currentUserId) {
     throw new Error("Authenticated patient required.");
   }
 
-  const profile = await getRealProfile();
+  const profile = await getRealProfile(currentUserId);
   const supabase = await getSupabaseServerClient();
   const symptomWindowStart = subDays(new Date(), 13).toISOString();
 
@@ -571,7 +572,7 @@ export async function getPatientDashboardData() {
     supabase
       .from("appointments")
       .select("id, patient_id, provider_id, scheduled_at, duration_minutes, type, status, chief_complaint, video_room_url, notes")
-      .eq("patient_id", user.id)
+      .eq("patient_id", currentUserId)
       .eq("status", "scheduled")
       .order("scheduled_at", { ascending: true })
       .limit(1)
@@ -579,25 +580,25 @@ export async function getPatientDashboardData() {
     supabase
       .from("cycle_logs")
       .select("id, period_start, period_end, cycle_length, flow_intensity, symptoms, ovulation_date, fertile_window_start, fertile_window_end, notes")
-      .eq("patient_id", user.id)
+      .eq("patient_id", currentUserId)
       .order("period_start", { ascending: false })
       .limit(1)
       .maybeSingle(),
     supabase
       .from("symptom_logs")
       .select("id, logged_at, symptoms, mood, energy, pain_level, sleep_hours, notes, ai_insight")
-      .eq("patient_id", user.id)
+      .eq("patient_id", currentUserId)
       .gte("logged_at", symptomWindowStart)
       .order("logged_at", { ascending: true }),
     supabase
       .from("care_plans")
       .select("id, title, description, status, milestones")
-      .eq("patient_id", user.id)
+      .eq("patient_id", currentUserId)
       .eq("status", "active")
       .order("created_at", { ascending: false })
       .limit(1)
       .maybeSingle(),
-    getDashboardMessageThreads(user.id).catch(() => []),
+    getDashboardMessageThreads(currentUserId).catch(() => []),
   ]);
 
   const safeNextAppointmentRow = nextAppointmentResult.error ? null : nextAppointmentResult.data;
@@ -1070,7 +1071,7 @@ export async function getRecordsData() {
       category: "Prescription",
       date: prescription.prescribedAt,
       provider: prescription.providerName,
-      summary: `${prescription.dosage} ï¿½ ${prescription.frequency}`,
+      summary: `${prescription.dosage} - ${prescription.frequency}`,
     })),
   ].sort((left, right) => new Date(right.date).getTime() - new Date(left.date).getTime());
 
@@ -2422,7 +2423,7 @@ export async function getClinicDashboardData() {
         status: acceptingPatients ? "Active and accepting" : "Active, not accepting",
         submittedAt: formatDashboardDate(profile?.created_at),
         action: acceptingPatients
-          ? `${Number(provider.total_reviews ?? 0)} reviews Ã‚Â· ${Number(provider.rating ?? 5).toFixed(1)} rating`
+          ? `${Number(provider.total_reviews ?? 0)} reviews - ${Number(provider.rating ?? 5).toFixed(1)} rating`
           : "Review panel access",
       };
     })
@@ -2951,6 +2952,3 @@ export async function getEmployerAdvancedAnalyticsData(rangeInput?: string): Pro
     monthlyComparison,
   };
 }
-
-
-

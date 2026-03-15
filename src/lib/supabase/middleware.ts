@@ -136,19 +136,51 @@ function applySecurityHeaders(response: NextResponse, pathname: string) {
   return response;
 }
 
-function redirectTo(request: NextRequest, pathname: string) {
+function logMiddlewareDecision(path: string, role: AppRole | null, redirectPath: string | null) {
+  console.log("Middleware:", {
+    path,
+    role,
+    redirect: redirectPath,
+  });
+}
+
+function withRedirectCount(response: NextResponse, redirectCount: number) {
+  response.cookies.set("redirect_count", String(redirectCount + 1), { path: "/", sameSite: "lax" });
+  return response;
+}
+
+function clearRedirectCount(response: NextResponse) {
+  response.cookies.delete("redirect_count");
+  return response;
+}
+
+function redirectTo(request: NextRequest, pathname: string, redirectCount: number, role: AppRole | null) {
+  logMiddlewareDecision(request.nextUrl.pathname, role, pathname);
   const url = request.nextUrl.clone();
   url.pathname = pathname;
   url.search = "";
-  return applySecurityHeaders(NextResponse.redirect(url), request.nextUrl.pathname);
+  const response = applySecurityHeaders(NextResponse.redirect(url), request.nextUrl.pathname);
+  return withRedirectCount(response, redirectCount);
 }
 
-function redirectToLogin(request: NextRequest) {
+function redirectToLogin(request: NextRequest, redirectCount: number, role: AppRole | null) {
+  logMiddlewareDecision(request.nextUrl.pathname, role, "/login");
   const url = request.nextUrl.clone();
   url.pathname = "/login";
   url.search = "";
   url.searchParams.set("next", `${request.nextUrl.pathname}${request.nextUrl.search}`);
-  return applySecurityHeaders(NextResponse.redirect(url), request.nextUrl.pathname);
+  const response = applySecurityHeaders(NextResponse.redirect(url), request.nextUrl.pathname);
+  return withRedirectCount(response, redirectCount);
+}
+
+function redirectLoopResponse(request: NextRequest) {
+  const url = request.nextUrl.clone();
+  url.pathname = "/login";
+  url.search = "";
+  const response = applySecurityHeaders(NextResponse.redirect(url), request.nextUrl.pathname);
+  response.cookies.delete("redirect_count");
+  logMiddlewareDecision(request.nextUrl.pathname, null, "/login (loop protection)");
+  return response;
 }
 
 export async function updateSession(request: NextRequest) {
@@ -174,6 +206,12 @@ export async function updateSession(request: NextRequest) {
   );
 
   const pathname = request.nextUrl.pathname;
+  const redirectCount = Number.parseInt(request.cookies.get("redirect_count")?.value ?? "0", 10);
+
+  if (redirectCount > 3) {
+    return redirectLoopResponse(request);
+  }
+
   const onboardingPath = matchesPath(pathname, "/onboarding");
   const patientAppPath = isProtectedPatientPath(pathname);
   const requiredRoles = getRequiredRoles(pathname);
@@ -184,50 +222,75 @@ export async function updateSession(request: NextRequest) {
   } = await supabase.auth.getUser();
 
   if (!user) {
-    return protectedPath ? redirectToLogin(request) : applySecurityHeaders(response, pathname);
+    if (protectedPath) {
+      return redirectToLogin(request, redirectCount, null);
+    }
+
+    logMiddlewareDecision(pathname, null, null);
+    return clearRedirectCount(applySecurityHeaders(response, pathname));
   }
 
-  const { data: profileData } = await supabase
+  const { data: profileData, error: profileError } = await supabase
     .from("profiles")
     .select("role, onboarding_complete")
     .eq("id", user.id)
     .maybeSingle();
 
+  const databaseRole = (profileData?.role as AppRole | null) ?? null;
+  const metadataRole = resolveRole(user.user_metadata?.role);
+  const role = databaseRole ?? (requiredRoles ? metadataRole : patientAppPath || onboardingPath ? "patient" : metadataRole);
   const profile: MiddlewareProfile | null = {
-    role: (profileData?.role as AppRole | null) ?? resolveRole(user.user_metadata?.role),
+    role,
     onboarding_complete: profileData?.onboarding_complete ?? hasCompletedOnboardingMetadata(user),
   };
 
+  if (profileError) {
+    console.error("Middleware profile lookup error:", {
+      path: pathname,
+      userId: user.id,
+      message: profileError.message,
+    });
+  }
+
   if (isAuthEntryPath(pathname)) {
-    return redirectTo(request, getAuthenticatedRedirectPath(profile));
+    return redirectTo(request, getAuthenticatedRedirectPath(profile), redirectCount, profile.role);
   }
 
   if (onboardingPath) {
     if (profile.role && profile.role !== "patient") {
-      return redirectTo(request, getAuthenticatedRedirectPath(profile));
+      return redirectTo(request, getAuthenticatedRedirectPath(profile), redirectCount, profile.role);
     }
 
     if (profile.onboarding_complete) {
-      return redirectTo(request, "/dashboard");
+      return redirectTo(request, "/dashboard", redirectCount, profile.role);
     }
 
-    return applySecurityHeaders(response, pathname);
+    logMiddlewareDecision(pathname, profile.role, null);
+    return clearRedirectCount(applySecurityHeaders(response, pathname));
   }
 
   if (patientAppPath) {
-    if (profile.role && profile.role !== "patient") {
-      return redirectTo(request, getAuthenticatedRedirectPath(profile));
+    if (profile.role === "patient") {
+      if (!profile.onboarding_complete && pathname !== "/dashboard") {
+        return redirectTo(request, "/onboarding", redirectCount, profile.role);
+      }
+
+      logMiddlewareDecision(pathname, profile.role, null);
+      return clearRedirectCount(applySecurityHeaders(response, pathname));
     }
 
-    if (!profile.onboarding_complete) {
-      return redirectTo(request, "/onboarding");
+    if (databaseRole && databaseRole !== "patient") {
+      return redirectTo(request, getAuthenticatedRedirectPath(profile), redirectCount, profile.role);
     }
+
+    logMiddlewareDecision(pathname, profile.role, null);
+    return clearRedirectCount(applySecurityHeaders(response, pathname));
   }
 
   if (requiredRoles && !requiredRoles.includes((profile.role as AppRole | null) ?? "patient")) {
-    return redirectTo(request, getAuthenticatedRedirectPath(profile));
+    return redirectTo(request, getAuthenticatedRedirectPath(profile), redirectCount, profile.role);
   }
 
-  return applySecurityHeaders(response, pathname);
+  logMiddlewareDecision(pathname, profile.role, null);
+  return clearRedirectCount(applySecurityHeaders(response, pathname));
 }
-

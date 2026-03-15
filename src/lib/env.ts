@@ -29,6 +29,10 @@ export const publicEnv = publicEnvSchema.parse({
   NEXT_PUBLIC_AI_INSIGHTS_ENABLED: process.env.NEXT_PUBLIC_AI_INSIGHTS_ENABLED,
 });
 
+if (process.env.NODE_ENV === "development") {
+  console.log("APP_URL:", publicEnv.NEXT_PUBLIC_APP_URL);
+}
+
 type ServerEnv = z.infer<typeof serverEnvSchema>;
 
 let parsedServerEnv: ServerEnv | null = null;
