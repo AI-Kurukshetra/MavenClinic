@@ -46,6 +46,23 @@ function getSafeNextPath(value: string | undefined) {
   return value && value.startsWith("/") && !value.startsWith("//") ? (value as Route) : null;
 }
 
+
+type AuthClient = Awaited<ReturnType<typeof getSupabaseServerClient>>;
+
+async function syncRoleMetadataForSessionUser(supabase: AuthClient, userId: string) {
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("role")
+    .eq("id", userId)
+    .maybeSingle();
+
+  if (profile?.role) {
+    await supabase.auth.updateUser({
+      data: { role: profile.role },
+    });
+  }
+}
+
 export async function loginAction(formData: FormData) {
   const payload = loginSchema.safeParse({
     email: String(formData.get("email") ?? "").trim(),
@@ -66,6 +83,7 @@ export async function loginAction(formData: FormData) {
     toRedirect("/login", { error: error?.message ?? "Unable to sign in." });
   }
 
+  await syncRoleMetadataForSessionUser(supabase, data.user.id);
   const profile = await getCurrentProfileWithSync(data.user);
   revalidatePath("/");
   redirect((getSafeNextPath(next) ?? getAuthenticatedRedirectPath(profile)) as Route);
