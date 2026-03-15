@@ -488,7 +488,14 @@ drop policy if exists "providers_read_own_record" on public.providers;
 drop policy if exists "providers_update_own_record" on public.providers;
 drop policy if exists "admins_manage_providers" on public.providers;
 create policy "public_read_active_providers" on public.providers
-  for select using ((accepting_patients = true and coalesce(suspended, false) = false) or profile_id = auth.uid());
+  for select using (
+    (
+      (accepting_patients = true or accepting_patients is null)
+      and (suspended = false or suspended is null)
+      and (approval_status = 'approved' or approval_status is null)
+    )
+    or profile_id = auth.uid()
+  );
 create policy "providers_read_own_record" on public.providers
   for select using (profile_id = auth.uid());
 create policy "providers_update_own_record" on public.providers
@@ -962,3 +969,4 @@ drop policy if exists "patients_manage_own_wellness_assessments" on public.welln
 create policy "patients_manage_own_wellness_assessments" on public.wellness_assessments
   for all using (patient_id = auth.uid())
   with check (patient_id = auth.uid());
+

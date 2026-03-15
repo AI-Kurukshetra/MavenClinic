@@ -12,6 +12,7 @@ import {
   type MessagingPageData,
   type MessagingRole,
 } from "@/lib/messaging-shared";
+import { getSupabaseAdminClient } from "@/lib/supabase/admin";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 
 export { createConversationSchema, MESSAGE_ATTACHMENT_BUCKET } from "@/lib/messaging-shared";
@@ -48,6 +49,14 @@ type MessageRow = {
   attachment_name?: string | null;
 };
 
+function getAdminClientSafe() {
+  try {
+    return getSupabaseAdminClient();
+  } catch (error) {
+    console.error("Messaging admin client unavailable:", error);
+    return null;
+  }
+}
 type ProviderContext = {
   userId: string;
   providerId: string;
@@ -98,41 +107,41 @@ async function getProviderContext(userId?: string): Promise<ProviderContext> {
 }
 
 async function getProfilesMap(profileIds: string[]) {
-  const supabase = await getSupabaseServerClient();
   if (!profileIds.length) {
     return new Map<string, ProfileRow>();
   }
 
-  const { data, error } = await supabase
-    .from("profiles")
-    .select("id, full_name, avatar_url")
-    .in("id", profileIds);
+  const supabase = await getSupabaseServerClient();
+  const admin = getAdminClientSafe();
+  const result = admin
+    ? await admin.from("profiles").select("id, full_name, avatar_url").in("id", profileIds)
+    : await supabase.from("profiles").select("id, full_name, avatar_url").in("id", profileIds);
 
-  if (error) {
-    throw new Error(error.message);
+  if (result.error) {
+    throw new Error(result.error.message);
   }
 
-  return new Map((data ?? []).map((profile) => [profile.id, profile as ProfileRow]));
+  return new Map((result.data ?? []).map((profile) => [profile.id, profile as ProfileRow]));
 }
 
 async function getProviderMetaMap(profileIds: string[]) {
-  const supabase = await getSupabaseServerClient();
   if (!profileIds.length) {
     return new Map<string, ProviderRow>();
   }
 
-  const { data, error } = await supabase
-    .from("providers")
-    .select("id, profile_id, specialty, languages, accepting_patients")
-    .in("profile_id", profileIds);
+  const supabase = await getSupabaseServerClient();
+  const admin = getAdminClientSafe();
+  const result = admin
+    ? await admin.from("providers").select("id, profile_id, specialty, languages, accepting_patients").in("profile_id", profileIds)
+    : await supabase.from("providers").select("id, profile_id, specialty, languages, accepting_patients").in("profile_id", profileIds);
 
-  if (error) {
-    throw new Error(error.message);
+  if (result.error) {
+    throw new Error(result.error.message);
   }
 
   const entries: Array<[string, ProviderRow]> = [];
 
-  for (const provider of (data ?? []) as ProviderRow[]) {
+  for (const provider of (result.data ?? []) as ProviderRow[]) {
     if (!provider.profile_id) {
       continue;
     }
@@ -586,5 +595,7 @@ export async function getCurrentUserMessagingRole(): Promise<MessagingRole | nul
 
   return data?.role === "provider" ? "provider" : data?.role === "patient" ? "patient" : null;
 }
+
+
 
 

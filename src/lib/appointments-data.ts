@@ -94,6 +94,49 @@ async function getProviderProfilesMap(profileIds: string[]) {
   return new Map((data as ProfileRow[]).map((profile) => [profile.id, profile]));
 }
 
+async function getBookableProviderRows() {
+  const supabase = await getSupabaseServerClient();
+
+  const primaryResult = await supabase
+    .from("providers")
+    .select("id, profile_id, specialty, bio, languages, accepting_patients, consultation_fee_cents, rating, total_reviews")
+    .eq("accepting_patients", true)
+    .is("suspended", null)
+    .order("specialty", { ascending: true });
+
+  if (primaryResult.error) {
+    console.error("Primary bookable providers query failed:", primaryResult.error.message);
+  }
+
+  if ((primaryResult.data ?? []).length) {
+    return primaryResult;
+  }
+
+  const secondaryResult = await supabase
+    .from("providers")
+    .select("id, profile_id, specialty, bio, languages, accepting_patients, consultation_fee_cents, rating, total_reviews")
+    .eq("accepting_patients", true)
+    .order("specialty", { ascending: true });
+
+  if (secondaryResult.error) {
+    console.error("Secondary bookable providers query failed:", secondaryResult.error.message);
+  }
+
+  if ((secondaryResult.data ?? []).length) {
+    return secondaryResult;
+  }
+
+  const fallbackResult = await supabase
+    .from("providers")
+    .select("id, profile_id, specialty, bio, languages, accepting_patients, consultation_fee_cents, rating, total_reviews")
+    .order("specialty", { ascending: true });
+
+  if (fallbackResult.error) {
+    console.error("Fallback bookable providers query failed:", fallbackResult.error.message);
+  }
+
+  return fallbackResult;
+}
 function mapProvider(row: ProviderRow, profile?: ProfileRow | null, availability: GeneratedDateSlots[] = []): BookingProvider {
   const nextAvailable = findNextAvailableSlot(availability);
 
@@ -157,11 +200,7 @@ export async function getAppointmentsPageData(): Promise<AppointmentsPageData> {
         .eq("patient_id", user.id)
         .in("status", ["scheduled", "in_progress"])
         .order("scheduled_at", { ascending: true }),
-      providerClient
-        .from("providers")
-        .select("id, profile_id, specialty, bio, languages, accepting_patients, consultation_fee_cents, rating, total_reviews")
-        .eq("accepting_patients", true)
-        .order("specialty", { ascending: true }),
+      getBookableProviderRows(),
     ]);
 
     if (upcomingAppointmentsResult.error) {
@@ -511,5 +550,6 @@ export async function getConsultationRoomData(appointmentId: string): Promise<Co
     })),
   };
 }
+
 
 

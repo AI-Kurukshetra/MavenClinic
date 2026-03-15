@@ -16,6 +16,14 @@ type ReferralRow = {
   created_at: string | null;
 };
 
+function getAdminClientSafe() {
+  try {
+    return getSupabaseAdminClient();
+  } catch (error) {
+    console.error("Referrals admin client unavailable:", error);
+    return null;
+  }
+}
 type ProviderRow = {
   id: string;
   profile_id: string | null;
@@ -181,8 +189,9 @@ export async function getPatientReferralsPageData(): Promise<PatientReferralsPag
     throw new Error("Authenticated patient required.");
   }
 
-  const admin = getSupabaseAdminClient();
-  const { data, error } = await admin
+  const supabase = await getSupabaseServerClient();
+  const admin = getAdminClientSafe();
+  const { data, error } = await supabase
     .from("referrals")
     .select("id, patient_id, referring_provider_id, referred_to_provider_id, referred_to_specialty, reason, urgency, status, clinical_notes, created_at")
     .eq("patient_id", user.id)
@@ -195,7 +204,7 @@ export async function getPatientReferralsPageData(): Promise<PatientReferralsPag
   const referralRows = (data ?? []) as ReferralRow[];
   const providerIds = Array.from(new Set(referralRows.flatMap((row) => [row.referring_provider_id, row.referred_to_provider_id]).filter((value): value is string => Boolean(value))));
   const providersResult = providerIds.length
-    ? await admin.from("providers").select("id, profile_id, specialty").in("id", providerIds)
+    ? await (admin ?? supabase).from("providers").select("id, profile_id, specialty").in("id", providerIds)
     : { data: [], error: null };
 
   if (providersResult.error) {
@@ -205,7 +214,7 @@ export async function getPatientReferralsPageData(): Promise<PatientReferralsPag
   const providerRows = (providersResult.data ?? []) as Array<{ id: string; profile_id: string | null; specialty: string }>;
   const profileIds = Array.from(new Set(providerRows.map((provider) => provider.profile_id).filter((value): value is string => Boolean(value))));
   const profilesResult = profileIds.length
-    ? await admin.from("profiles").select("id, full_name").in("id", profileIds)
+    ? await (admin ?? supabase).from("profiles").select("id, full_name").in("id", profileIds)
     : { data: [], error: null };
 
   if (profilesResult.error) {
@@ -339,3 +348,4 @@ export async function createReferral(payload: ReferralPayload) {
 
   return mapReferralRow(referral as ReferralRow, patientMap, providerMap);
 }
+
