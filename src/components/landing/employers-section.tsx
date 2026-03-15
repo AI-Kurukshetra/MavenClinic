@@ -1,4 +1,4 @@
-﻿import Link from "next/link";
+import Link from "next/link";
 import { Card } from "@/components/ui/card";
 import { ScrollReveal } from "@/components/landing/scroll-reveal";
 import { EmployerMiniCharts } from "@/components/landing/employer-mini-charts";
@@ -41,7 +41,7 @@ export function EmployersSection() {
             >
               Request a demo
             </Link>
-            <Link href="#footer" className="inline-flex h-[3.25rem] items-center justify-center rounded-full px-2 text-base font-medium text-[var(--foreground)] underline underline-offset-4 transition hover:text-[var(--rose-700)]">
+            <Link href="/pricing" className="inline-flex h-[3.25rem] items-center justify-center rounded-full px-2 text-base font-medium text-[var(--foreground)] underline underline-offset-4 transition hover:text-[var(--rose-700)]">
               View pricing <span className="ml-1">-&gt;</span>
             </Link>
           </div>
@@ -66,3 +66,4 @@ export function EmployersSection() {
     </section>
   );
 }
+

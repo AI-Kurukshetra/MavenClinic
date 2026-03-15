@@ -1,3 +1,4 @@
+import type { Route } from "next";
 import Link from "next/link";
 import { Instagram, Linkedin, Twitter } from "lucide-react";
 
@@ -5,31 +6,31 @@ const footerColumns = [
   {
     title: "Product",
     links: [
-      { href: { pathname: "/", hash: "patients" }, label: "Patients" },
-      { href: { pathname: "/", hash: "providers" }, label: "Providers" },
-      { href: { pathname: "/", hash: "employers" }, label: "Employers" },
-      { href: "/register/employer", label: "Pricing" },
+      { href: "/#patients", label: "Patients" },
+      { href: "/#providers", label: "Providers" },
+      { href: "/#employers", label: "Employers" },
+      { href: "/pricing", label: "Pricing" },
     ],
   },
   {
     title: "Specialties",
     links: [
-      { href: { pathname: "/", hash: "providers" }, label: "OB/GYN" },
-      { href: { pathname: "/", hash: "providers" }, label: "Fertility" },
-      { href: { pathname: "/", hash: "providers" }, label: "Mental Health" },
-      { href: { pathname: "/", hash: "providers" }, label: "Menopause" },
-      { href: { pathname: "/", hash: "providers" }, label: "Nutrition" },
+      { href: "/#providers", label: "OB/GYN" },
+      { href: "/#providers", label: "Fertility" },
+      { href: "/#providers", label: "Mental Health" },
+      { href: "/#providers", label: "Menopause" },
+      { href: "/#providers", label: "Nutrition" },
     ],
   },
   {
     title: "Company",
     links: [
-      { href: { pathname: "/", hash: "how-it-works" }, label: "About" },
+      { href: "/about", label: "About" },
       { href: "/register/provider", label: "Careers" },
-      { href: { pathname: "/", hash: "patients" }, label: "Press" },
-      { href: "/login", label: "Privacy" },
-      { href: "/login", label: "Terms" },
-      { href: "/login", label: "HIPAA" },
+      { href: "/#patients", label: "Press" },
+      { href: "/privacy", label: "Privacy" },
+      { href: "/terms", label: "Terms" },
+      { href: "/hipaa", label: "HIPAA" },
     ],
   },
 ] as const;
@@ -52,7 +53,7 @@ export function FooterSection() {
             {socialLinks.map((Icon) => (
               <Link
                 key={Icon.displayName}
-                href={{ pathname: "/", hash: "footer" }}
+                href={"/#footer" as Route}
                 className="inline-flex h-11 w-11 items-center justify-center rounded-full border border-[var(--border)] bg-white transition hover:border-[var(--border-strong)] hover:text-[var(--foreground)]"
                 aria-label="Social link"
               >
@@ -67,7 +68,7 @@ export function FooterSection() {
             <h3 className="text-sm font-semibold uppercase tracking-[0.2em] text-[var(--foreground-muted)]">{column.title}</h3>
             <div className="mt-5 space-y-3">
               {column.links.map((link) => (
-                <Link key={link.label} href={link.href} className="block text-sm transition hover:text-[var(--rose-700)]">
+                <Link key={link.label} href={link.href as Route} className="block text-sm transition hover:text-[var(--rose-700)]">
                   {link.label}
                 </Link>
               ))}

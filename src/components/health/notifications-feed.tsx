@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { useEffect, useMemo, useState } from "react";
 import type { RealtimePostgresChangesPayload } from "@supabase/supabase-js";
@@ -72,6 +72,7 @@ export function NotificationsFeed({ userId, initialNotifications, initialUnreadC
   const [notifications, setNotifications] = useState(initialNotifications);
   const [unreadCount, setUnreadCount] = useState(initialUnreadCount);
   const [pendingId, setPendingId] = useState<string | null>(null);
+  const [markingAllRead, setMarkingAllRead] = useState(false);
 
   useEffect(() => {
     const supabase = getSupabaseBrowserClient();
@@ -123,6 +124,29 @@ export function NotificationsFeed({ userId, initialNotifications, initialUnreadC
 
   const unreadLabel = useMemo(() => `${unreadCount} unread`, [unreadCount]);
 
+  async function handleMarkAllRead() {
+    if (markingAllRead || unreadCount === 0) {
+      return;
+    }
+
+    const readAt = new Date().toISOString();
+    setMarkingAllRead(true);
+    setNotifications((current) => current.map((item) => item.readAt ? item : { ...item, readAt }));
+    setUnreadCount(0);
+
+    try {
+      const response = await fetch("/api/notifications", { method: "PATCH" });
+      if (!response.ok) {
+        throw new Error("Unable to mark all notifications as read.");
+      }
+    } catch {
+      setNotifications(initialNotifications);
+      setUnreadCount(initialUnreadCount);
+    } finally {
+      setMarkingAllRead(false);
+    }
+  }
+
   async function handleNotificationClick(item: NotificationItem) {
     if (pendingId) {
       return;
@@ -170,7 +194,17 @@ export function NotificationsFeed({ userId, initialNotifications, initialUnreadC
           <p className="text-sm uppercase tracking-[0.24em] text-[var(--rose-700)]">Activity center</p>
           <h2 className="mt-2 text-3xl font-semibold tracking-tight">Notifications</h2>
         </div>
-        <div className="rounded-full bg-[var(--slate-50)] px-4 py-2 text-sm font-medium text-[var(--foreground-muted)]">{unreadLabel}</div>
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={() => void handleMarkAllRead()}
+            disabled={markingAllRead || unreadCount === 0}
+            className="inline-flex h-10 items-center justify-center rounded-full border border-[var(--border)] bg-white px-4 text-sm font-medium text-[var(--foreground)] transition hover:bg-[var(--slate-50)] disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {markingAllRead ? "Marking..." : "Mark all read"}
+          </button>
+          <div className="rounded-full bg-[var(--slate-50)] px-4 py-2 text-sm font-medium text-[var(--foreground-muted)]">{unreadLabel}</div>
+        </div>
       </div>
 
       {notifications.length ? (

@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import Link from "next/link";
 import { FormEvent, useMemo, useState } from "react";
@@ -202,7 +202,7 @@ export function SignupForm({ action, serverError, invitationToken, invitedEmail,
 
       <div className="space-y-4 text-center">
         <p className="text-center text-xs leading-6 text-slate-400">
-          By creating an account you agree to our Terms of Service and Privacy Policy. HIPAA-compliant platform.
+          By creating an account you agree to our <Link href="/terms" className="font-medium text-[var(--rose-500)] transition hover:text-[var(--rose-600)]">Terms of Service</Link> and <Link href="/privacy" className="font-medium text-[var(--rose-500)] transition hover:text-[var(--rose-600)]">Privacy Policy</Link>. HIPAA-compliant platform.
         </p>
         <p className="text-sm text-[var(--foreground-muted)]">
           Already have an account?{" "}
