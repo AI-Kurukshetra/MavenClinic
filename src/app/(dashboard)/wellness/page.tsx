@@ -1,16 +1,20 @@
-import { ComingSoonState } from "@/components/health/coming-soon-state";
+import type { Metadata } from "next";
 import { DashboardShell } from "@/components/health/dashboard-shell";
+import { WellnessPage } from "@/features/patient/wellness-page";
+import { getPatientWellnessPageData } from "@/lib/patient-pages";
 
-export default function Page() {
+export const metadata: Metadata = {
+  title: "Wellness - Maven Clinic",
+};
+
+export const revalidate = 0;
+
+export default async function WellnessRoute() {
+  const data = await getPatientWellnessPageData();
+
   return (
-    <DashboardShell title="Wellness" eyebrow="Holistic score">
-      <ComingSoonState
-        badge="Coming soon"
-        title="Wellness insights"
-        description="Assessments, recovery scoring, and whole-person wellness trends will be surfaced here for patient follow-through."
-        dashboardHref="/dashboard"
-        dashboardLabel="Back to patient dashboard"
-      />
+    <DashboardShell title="Wellness" eyebrow="Score and assessments">
+      <WellnessPage {...data} />
     </DashboardShell>
   );
 }

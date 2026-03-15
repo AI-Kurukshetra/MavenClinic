@@ -1,16 +1,20 @@
-import { ComingSoonState } from "@/components/health/coming-soon-state";
+import type { Metadata } from "next";
 import { DashboardShell } from "@/components/health/dashboard-shell";
+import { InsurancePage } from "@/features/patient/insurance-page";
+import { getPatientInsurancePageData } from "@/lib/patient-pages";
 
-export default function Page() {
+export const metadata: Metadata = {
+  title: "Insurance - Maven Clinic",
+};
+
+export const revalidate = 0;
+
+export default async function InsuranceRoute() {
+  const data = await getPatientInsurancePageData();
+
   return (
-    <DashboardShell title="Insurance" eyebrow="Coverage">
-      <ComingSoonState
-        badge="Coming soon"
-        title="Insurance and claims"
-        description="Coverage verification, claims tracking, and billing support will be added here while keeping this patient route protected today."
-        dashboardHref="/dashboard"
-        dashboardLabel="Back to patient dashboard"
-      />
+    <DashboardShell title="Insurance" eyebrow="Coverage and claims">
+      <InsurancePage {...data} />
     </DashboardShell>
   );
 }

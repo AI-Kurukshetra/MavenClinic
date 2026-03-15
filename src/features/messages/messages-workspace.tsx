@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import type { RealtimePostgresChangesPayload } from "@supabase/supabase-js";
@@ -33,7 +33,7 @@ type AttachmentState = {
   name: string;
 };
 
-type Props = MessagingPageData;
+type Props = MessagingPageData & { initialComposerValue?: string };
 
 type MessageRow = {
   id: string;
@@ -140,7 +140,7 @@ function sanitizeFileName(name: string) {
   return name.replace(/[^a-zA-Z0-9._-]/g, "-");
 }
 
-export function MessagesWorkspace({ currentUserId, role, conversations: initialConversations, initialConversationId, initialThread, candidates, storageBucket }: Props) {
+export function MessagesWorkspace({ currentUserId, role, conversations: initialConversations, initialConversationId, initialThread, candidates, storageBucket, initialComposerValue }: Props) {
   const supabase = getSupabaseBrowserClient();
   const [conversations, setConversations] = useState(() => sortConversations(initialConversations));
   const [activeConversationId, setActiveConversationId] = useState<string | null>(initialConversationId);
@@ -148,7 +148,7 @@ export function MessagesWorkspace({ currentUserId, role, conversations: initialC
     initialThread ? { [initialThread.id]: initialThread } : {},
   );
   const [threadLoading, setThreadLoading] = useState(false);
-  const [composerValue, setComposerValue] = useState("");
+  const [composerValue, setComposerValue] = useState(initialComposerValue ?? "");
   const [pendingAttachment, setPendingAttachment] = useState<AttachmentState | null>(null);
   const [attachmentUploading, setAttachmentUploading] = useState(false);
   const [toast, setToast] = useState<ToastState | null>(null);
@@ -816,3 +816,4 @@ export function MessagesWorkspace({ currentUserId, role, conversations: initialC
     </>
   );
 }
+

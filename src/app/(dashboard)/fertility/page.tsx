@@ -1,16 +1,20 @@
-import { ComingSoonState } from "@/components/health/coming-soon-state";
+import type { Metadata } from "next";
 import { DashboardShell } from "@/components/health/dashboard-shell";
+import { FertilityPage } from "@/features/patient/fertility-page";
+import { getPatientFertilityPageData } from "@/lib/patient-pages";
 
-export default function Page() {
+export const metadata: Metadata = {
+  title: "Fertility - Maven Clinic",
+};
+
+export const revalidate = 0;
+
+export default async function FertilityRoute() {
+  const data = await getPatientFertilityPageData();
+
   return (
-    <DashboardShell title="Fertility" eyebrow="Planning support">
-      <ComingSoonState
-        badge="Coming soon"
-        title="Fertility planning workspace"
-        description="Cycle-linked fertility trends, conception planning, and provider guidance will live here once the next patient module is ready."
-        dashboardHref="/dashboard"
-        dashboardLabel="Back to patient dashboard"
-      />
+    <DashboardShell title="Fertility" eyebrow="Conception support">
+      <FertilityPage {...data} />
     </DashboardShell>
   );
 }

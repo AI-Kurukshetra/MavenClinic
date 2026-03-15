@@ -1,16 +1,20 @@
-import { ComingSoonState } from "@/components/health/coming-soon-state";
+import type { Metadata } from "next";
 import { DashboardShell } from "@/components/health/dashboard-shell";
+import { SupportGroupsPage } from "@/features/patient/support-groups-page";
+import { getPatientSupportGroupsPageData } from "@/lib/patient-pages";
 
-export default function Page() {
+export const metadata: Metadata = {
+  title: "Support Groups - Maven Clinic",
+};
+
+export const revalidate = 0;
+
+export default async function SupportGroupsRoute() {
+  const data = await getPatientSupportGroupsPageData();
+
   return (
-    <DashboardShell title="Support groups" eyebrow="Community">
-      <ComingSoonState
-        badge="Coming soon"
-        title="Support group hub"
-        description="Moderated groups, group matching, and safe community participation will be added here without changing the protected route structure."
-        dashboardHref="/dashboard"
-        dashboardLabel="Back to patient dashboard"
-      />
+    <DashboardShell title="Support Groups" eyebrow="Community care">
+      <SupportGroupsPage {...data} />
     </DashboardShell>
   );
 }

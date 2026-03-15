@@ -45,48 +45,31 @@ export async function inviteEmployeeAction(formData: FormData) {
     toEmployeesRedirect(page, { error: employerError?.message ?? "Missing employer record for this admin." });
   }
 
-  let invitationStored = false;
-  let inviteSent = false;
-  let warning: string | null = null;
-
-  const inviteInsert = await admin
+  const { data: invitation, error: inviteError } = await admin
     .from("invitations")
     .insert({
       email,
       role: "patient",
       employer_id: employer.id,
-    } as never);
+      invited_by: user.id,
+      metadata: {
+        employer_id: employer.id,
+        employer_name: employer.company_name,
+      },
+    })
+    .select("token")
+    .single();
 
-  if (!inviteInsert.error) {
-    invitationStored = true;
-  } else {
-    warning = "Employee invite tracking needs the latest invitation schema before records can be stored.";
+  if (inviteError || !invitation?.token) {
+    toEmployeesRedirect(page, { error: inviteError?.message ?? "Unable to create the employee invite right now." });
   }
 
-  const authInvite = await admin.auth.admin.inviteUserByEmail(email, {
-    redirectTo: `${publicEnv.NEXT_PUBLIC_APP_URL}/signup`,
-    data: {
-      role: "patient",
-      employerId: employer.id,
-      employerName: employer.company_name,
-    },
-  });
-
-  if (!authInvite.error) {
-    inviteSent = true;
-  } else if (!warning) {
-    warning = "The invite record was saved, but the email could not be sent automatically.";
-  }
-
-  if (!invitationStored && !inviteSent) {
-    toEmployeesRedirect(page, { error: "Unable to create the employee invite right now." });
-  }
+  const inviteLink = `${publicEnv.NEXT_PUBLIC_APP_URL}/signup?token=${invitation.token}`;
 
   revalidatePath("/employer/employees");
   revalidatePath("/employer/dashboard");
   toEmployeesRedirect(page, {
-    message: inviteSent ? `Invitation prepared for ${email}.` : `Invite record created for ${email}.`,
-    ...(warning ? { warning } : {}),
+    message: `Invitation prepared for ${email}.`,
+    inviteLink,
   });
 }
-

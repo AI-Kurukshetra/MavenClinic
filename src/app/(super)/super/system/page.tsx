@@ -1,23 +1,25 @@
-import { ComingSoonState } from "@/components/health/coming-soon-state";
+﻿import { Toast } from "@/components/ui/Toast";
 import { DashboardShell } from "@/components/health/dashboard-shell";
-import { Card } from "@/components/ui/card";
+import { SuperSystemPanel } from "@/features/super/super-admin-panels";
+import { getSuperSystemPageData } from "@/lib/super-admin-data";
 
-export default function SuperSystemPage() {
+function getParam(value: string | string[] | undefined) {
+  return typeof value === "string" ? value : null;
+}
+
+export default async function SuperSystemPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
+  const params = await searchParams;
+  const data = await getSuperSystemPageData();
+  const message = getParam(params.message);
+  const error = getParam(params.error);
+
   return (
-    <DashboardShell title="System controls" eyebrow="Super admin workflow" section="super">
-      <Card className="mb-6">
-        <h2 className="text-2xl font-semibold">Operational control center</h2>
-        <p className="mt-2 text-sm leading-7 text-[var(--foreground-muted)]">
-          Feature-flag governance, operational policy rollout, and key system controls belong here for the super admin workflow.
-        </p>
-      </Card>
-      <ComingSoonState
-        badge="System workflow"
-        title="System management is queued"
-        description="This protected page is ready for feature flags, API configuration, and platform-wide administrative controls."
-        dashboardHref="/super/dashboard"
-        dashboardLabel="Back to super dashboard"
-      />
+    <DashboardShell title="System" eyebrow="Operational controls" section="super">
+      <div className="space-y-6">
+        {message ? <Toast message={message} variant="success" /> : null}
+        {error ? <Toast message={error} variant="error" /> : null}
+        <SuperSystemPanel data={data} />
+      </div>
     </DashboardShell>
   );
 }

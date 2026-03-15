@@ -1,4 +1,4 @@
-import { startOfMonth, subMonths } from "date-fns";
+﻿import { startOfMonth, subMonths } from "date-fns";
 import { formatAvailabilityDay, formatTime, getSpecialtyLabel } from "@/lib/appointments";
 import { requireClinicAdminAccess } from "@/lib/clinic-admin";
 import { getSupabaseAdminClient } from "@/lib/supabase/admin";
@@ -10,6 +10,9 @@ type ProviderRow = {
   specialty: string;
   bio: string | null;
   accepting_patients: boolean | null;
+  suspended: boolean | null;
+  suspended_at: string | null;
+  suspended_reason: string | null;
   rating: number | null;
   total_reviews: number | null;
 };
@@ -126,7 +129,9 @@ export type ClinicProviderListItem = {
   avatarUrl: string | null;
   name: string;
   specialty: string;
-  status: "Active and accepting" | "Inactive" | "Pending approval";
+  status: "Active and accepting" | "Inactive" | "Pending approval" | "Suspended";
+  suspendedAt: string | null;
+  suspendedReason: string | null;
   rating: number;
   patients: number;
   joinedDate: string;
@@ -164,6 +169,9 @@ export type ClinicNotificationListItem = {
 };
 
 export type ClinicProviderDetail = {
+  status: "Active and accepting" | "Inactive" | "Pending approval" | "Suspended";
+  suspendedAt: string | null;
+  suspendedReason: string | null;
   id: string;
   avatarUrl: string | null;
   name: string;
@@ -253,12 +261,16 @@ function formatRoleLabel(value?: string | null) {
     .join(" ");
 }
 
-function getProviderStatus(value: boolean | null): ClinicProviderListItem["status"] {
-  if (value === true) {
+function getProviderStatus(provider: Pick<ProviderRow, "accepting_patients" | "suspended">): ClinicProviderListItem["status"] {
+  if (provider.suspended) {
+    return "Suspended";
+  }
+
+  if (provider.accepting_patients === true) {
     return "Active and accepting";
   }
 
-  if (value === false) {
+  if (provider.accepting_patients === false) {
     return "Inactive";
   }
 
@@ -310,7 +322,7 @@ async function getBaseClinicData() {
   const admin = getSupabaseAdminClient();
 
   const [providers, providerProfiles, appointments, patientProfiles, invitations, conversations, messages, notifications] = await Promise.all([
-    safeRows<ProviderRow>(admin.from("providers").select("id, profile_id, specialty, bio, accepting_patients, rating, total_reviews").order("specialty", { ascending: true })),
+    safeRows<ProviderRow>(admin.from("providers").select("id, profile_id, specialty, bio, accepting_patients, suspended, suspended_at, suspended_reason, rating, total_reviews").order("specialty", { ascending: true })),
     safeRows<ProfileRow>(admin.from("profiles").select("id, full_name, avatar_url, created_at, role").in("role", ["provider", "patient", "clinic_admin", "super_admin"])),
     safeRows<AppointmentRow>(admin.from("appointments").select("id, patient_id, provider_id, status, scheduled_at, created_at").order("scheduled_at", { ascending: false })),
     safeRows<ProfileRow>(admin.from("profiles").select("id, full_name, avatar_url, created_at, role").eq("role", "patient")),
@@ -361,7 +373,9 @@ export async function getClinicDashboardData() {
       avatarUrl: profile?.avatar_url ?? null,
       name: profile?.full_name ?? `${getSpecialtyLabel(provider.specialty)} specialist`,
       specialty: getSpecialtyLabel(provider.specialty),
-      status: getProviderStatus(provider.accepting_patients),
+      status: getProviderStatus(provider),
+      suspendedAt: provider.suspended_at,
+      suspendedReason: provider.suspended_reason,
       rating: Number(provider.rating ?? 0),
       patients: patientsByProvider.get(provider.id)?.size ?? 0,
       joinedDate: formatDateLabel(profile?.created_at),
@@ -492,7 +506,7 @@ export async function getClinicProviderDetailData(providerId: string): Promise<C
   await requireClinicAdminAccess();
   const admin = getSupabaseAdminClient();
   const provider = await safeMaybeSingle<ProviderRow>(
-    admin.from("providers").select("id, profile_id, specialty, bio, accepting_patients, rating, total_reviews").eq("id", providerId).maybeSingle(),
+    admin.from("providers").select("id, profile_id, specialty, bio, accepting_patients, suspended, suspended_at, suspended_reason, rating, total_reviews").eq("id", providerId).maybeSingle(),
   );
 
   if (!provider) {
@@ -511,6 +525,9 @@ export async function getClinicProviderDetailData(providerId: string): Promise<C
 
   return {
     id: provider.id,
+    status: getProviderStatus(provider),
+    suspendedAt: provider.suspended_at,
+    suspendedReason: provider.suspended_reason,
     avatarUrl: profile?.avatar_url ?? null,
     name: profile?.full_name ?? `${getSpecialtyLabel(provider.specialty)} specialist`,
     specialty: getSpecialtyLabel(provider.specialty),
@@ -702,3 +719,7 @@ export async function getClinicAnalyticsPageData(): Promise<ClinicAnalyticsData>
     signups,
   };
 }
+
+
+
+

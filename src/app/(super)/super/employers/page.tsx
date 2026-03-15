@@ -1,23 +1,25 @@
-import { ComingSoonState } from "@/components/health/coming-soon-state";
+﻿import { Toast } from "@/components/ui/Toast";
 import { DashboardShell } from "@/components/health/dashboard-shell";
-import { Card } from "@/components/ui/card";
+import { SuperEmployersPanel } from "@/features/super/super-admin-panels";
+import { getSuperEmployersPageData } from "@/lib/super-admin-data";
 
-export default function SuperEmployersPage() {
+function getParam(value: string | string[] | undefined) {
+  return typeof value === "string" ? value : null;
+}
+
+export default async function SuperEmployersPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
+  const params = await searchParams;
+  const data = await getSuperEmployersPageData();
+  const message = getParam(params.message);
+  const error = getParam(params.error);
+
   return (
-    <DashboardShell title="Employer operations" eyebrow="Super admin workflow" section="super">
-      <Card className="mb-6">
-        <h2 className="text-2xl font-semibold">Account review queue</h2>
-        <p className="mt-2 text-sm leading-7 text-[var(--foreground-muted)]">
-          This page is the working entry point for the super admin employer workflow. Renewal tracking, contract status, and exception handling will be layered in here next.
-        </p>
-      </Card>
-      <ComingSoonState
-        badge="Employer workflow"
-        title="Employer controls are staged"
-        description="The protected employer-operations route is live. Next work should add contract actions, lifecycle updates, and financial controls here."
-        dashboardHref="/super/dashboard"
-        dashboardLabel="Back to super dashboard"
-      />
+    <DashboardShell title="Employers" eyebrow="Portfolio oversight" section="super">
+      <div className="space-y-6">
+        {message ? <Toast message={message} variant="success" /> : null}
+        {error ? <Toast message={error} variant="error" /> : null}
+        <SuperEmployersPanel data={data} />
+      </div>
     </DashboardShell>
   );
 }

@@ -1,7 +1,7 @@
-﻿import { Toast } from "@/components/ui/Toast";
+import { Toast } from "@/components/ui/Toast";
 import { DashboardShell } from "@/components/health/dashboard-shell";
-import { ClinicProvidersPanel } from "@/features/clinic/clinic-providers-panel";
-import { getClinicProvidersPageData } from "@/lib/clinic-admin-data";
+import { ClinicProvidersManagementPage } from "@/features/clinic/clinic-providers-management-page";
+import { getClinicProvidersManagementData } from "@/lib/clinic-provider-approvals";
 
 function getParam(value: string | string[] | undefined) {
   return typeof value === "string" ? value : null;
@@ -9,7 +9,7 @@ function getParam(value: string | string[] | undefined) {
 
 export default async function ClinicProvidersPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const params = await searchParams;
-  const data = await getClinicProvidersPageData();
+  const data = await getClinicProvidersManagementData();
   const message = getParam(params.message);
   const error = getParam(params.error);
 
@@ -18,7 +18,7 @@ export default async function ClinicProvidersPage({ searchParams }: { searchPara
       <div className="space-y-6">
         {message ? <Toast message={message} variant="success" /> : null}
         {error ? <Toast message={error} variant="error" /> : null}
-        <ClinicProvidersPanel providers={data.providers} redirectTo="/clinic/providers" />
+        <ClinicProvidersManagementPage {...data} />
       </div>
     </DashboardShell>
   );

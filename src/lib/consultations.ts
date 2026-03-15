@@ -1,4 +1,5 @@
 import { serverEnv } from "@/lib/env";
+import { getFeatureFlagEnabled } from "@/lib/feature-flags";
 
 export async function ensureConsultationRoom({
   supabase,
@@ -23,7 +24,9 @@ export async function ensureConsultationRoom({
 
   const fallbackUrl = `/consultations/${appointmentId}/demo`;
 
-  if (!serverEnv.DAILY_API_KEY) {
+  const videoEnabled = await getFeatureFlagEnabled("video_consultations", true);
+
+  if (!videoEnabled || !serverEnv.DAILY_API_KEY) {
     const { error } = await supabase
       .from("appointments")
       .update({ video_room_url: fallbackUrl, updated_at: new Date().toISOString() })

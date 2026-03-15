@@ -14,6 +14,8 @@ type AdminDatabase = {
           expires_at: string | null;
           created_at: string | null;
           employer_id: string | null;
+          invited_by: string | null;
+          metadata: unknown;
         };
         Insert: {
           id?: string;
@@ -24,6 +26,8 @@ type AdminDatabase = {
           expires_at?: string | null;
           created_at?: string | null;
           employer_id?: string | null;
+          invited_by?: string | null;
+          metadata?: unknown;
         };
         Update: {
           id?: string;
@@ -34,6 +38,8 @@ type AdminDatabase = {
           expires_at?: string | null;
           created_at?: string | null;
           employer_id?: string | null;
+          invited_by?: string | null;
+          metadata?: unknown;
         };
         Relationships: [];
       };
@@ -130,6 +136,86 @@ type AdminDatabase = {
         };
         Relationships: [];
       };
+      referrals: {
+        Row: {
+          id: string;
+          patient_id: string | null;
+          referring_provider_id: string | null;
+          referred_to_provider_id: string | null;
+          referred_to_specialty: string | null;
+          reason: string | null;
+          urgency: string | null;
+          status: string | null;
+          clinical_notes: string | null;
+          created_at: string | null;
+        };
+        Insert: {
+          id?: string;
+          patient_id?: string | null;
+          referring_provider_id?: string | null;
+          referred_to_provider_id?: string | null;
+          referred_to_specialty?: string | null;
+          reason?: string | null;
+          urgency?: string | null;
+          status?: string | null;
+          clinical_notes?: string | null;
+          created_at?: string | null;
+        };
+        Update: {
+          id?: string;
+          patient_id?: string | null;
+          referring_provider_id?: string | null;
+          referred_to_provider_id?: string | null;
+          referred_to_specialty?: string | null;
+          reason?: string | null;
+          urgency?: string | null;
+          status?: string | null;
+          clinical_notes?: string | null;
+          created_at?: string | null;
+        };
+        Relationships: [];
+      };      feature_flags: {
+        Row: {
+          key: string;
+          enabled: boolean | null;
+          updated_by: string | null;
+          updated_at: string | null;
+        };
+        Insert: {
+          key: string;
+          enabled?: boolean | null;
+          updated_by?: string | null;
+          updated_at?: string | null;
+        };
+        Update: {
+          key?: string;
+          enabled?: boolean | null;
+          updated_by?: string | null;
+          updated_at?: string | null;
+        };
+        Relationships: [];
+      };
+      platform_settings: {
+        Row: {
+          key: string;
+          value: string | null;
+          updated_by: string | null;
+          updated_at: string | null;
+        };
+        Insert: {
+          key: string;
+          value?: string | null;
+          updated_by?: string | null;
+          updated_at?: string | null;
+        };
+        Update: {
+          key?: string;
+          value?: string | null;
+          updated_by?: string | null;
+          updated_at?: string | null;
+        };
+        Relationships: [];
+      };
       educational_content: {
         Row: {
           id: string;
@@ -184,7 +270,48 @@ type AdminDatabase = {
         };
         Relationships: [];
       };
-      notifications: {
+      cycle_logs: {
+        Row: {
+          id: string;
+          patient_id: string | null;
+          period_start: string | null;
+          period_end: string | null;
+          cycle_length: number | null;
+          flow_intensity: string | null;
+          symptoms: unknown;
+          ovulation_date: string | null;
+          fertile_window_start: string | null;
+          fertile_window_end: string | null;
+          notes: string | null;
+        };
+        Insert: {
+          id?: string;
+          patient_id?: string | null;
+          period_start?: string | null;
+          period_end?: string | null;
+          cycle_length?: number | null;
+          flow_intensity?: string | null;
+          symptoms?: unknown;
+          ovulation_date?: string | null;
+          fertile_window_start?: string | null;
+          fertile_window_end?: string | null;
+          notes?: string | null;
+        };
+        Update: {
+          id?: string;
+          patient_id?: string | null;
+          period_start?: string | null;
+          period_end?: string | null;
+          cycle_length?: number | null;
+          flow_intensity?: string | null;
+          symptoms?: unknown;
+          ovulation_date?: string | null;
+          fertile_window_start?: string | null;
+          fertile_window_end?: string | null;
+          notes?: string | null;
+        };
+        Relationships: [];
+      };      notifications: {
         Row: {
           id: string;
           recipient_id: string | null;
@@ -334,6 +461,8 @@ type AdminDatabase = {
           avatar_url?: string | null;
           onboarding_complete?: boolean | null;
           employer_id?: string | null;
+          invited_by?: string | null;
+          metadata?: unknown;
           created_at?: string | null;
         };
         Update: {
@@ -345,6 +474,8 @@ type AdminDatabase = {
           avatar_url?: string | null;
           onboarding_complete?: boolean | null;
           employer_id?: string | null;
+          invited_by?: string | null;
+          metadata?: unknown;
           created_at?: string | null;
         };
         Relationships: [];
@@ -385,6 +516,9 @@ type AdminDatabase = {
           bio: string | null;
           languages: string[] | null;
           accepting_patients: boolean | null;
+          suspended: boolean | null;
+          suspended_at: string | null;
+          suspended_reason: string | null;
           consultation_fee_cents: number | null;
           rating: number | null;
           total_reviews: number | null;
@@ -397,6 +531,9 @@ type AdminDatabase = {
           bio?: string | null;
           languages?: string[] | null;
           accepting_patients?: boolean | null;
+          suspended?: boolean | null;
+          suspended_at?: string | null;
+          suspended_reason?: string | null;
           consultation_fee_cents?: number | null;
           rating?: number | null;
           total_reviews?: number | null;
@@ -409,6 +546,9 @@ type AdminDatabase = {
           bio?: string | null;
           languages?: string[] | null;
           accepting_patients?: boolean | null;
+          suspended?: boolean | null;
+          suspended_at?: string | null;
+          suspended_reason?: string | null;
           consultation_fee_cents?: number | null;
           rating?: number | null;
           total_reviews?: number | null;
@@ -499,7 +639,122 @@ type AdminDatabase = {
         };
         Relationships: [];
       };
-      support_groups: {
+      symptom_logs: {
+        Row: {
+          id: string;
+          patient_id: string | null;
+          logged_at: string | null;
+          symptoms: unknown;
+          mood: number | null;
+          energy: number | null;
+          pain_level: number | null;
+          sleep_hours: number | null;
+          notes: string | null;
+          ai_insight: string | null;
+        };
+        Insert: {
+          id?: string;
+          patient_id?: string | null;
+          logged_at?: string | null;
+          symptoms?: unknown;
+          mood?: number | null;
+          energy?: number | null;
+          pain_level?: number | null;
+          sleep_hours?: number | null;
+          notes?: string | null;
+          ai_insight?: string | null;
+        };
+        Update: {
+          id?: string;
+          patient_id?: string | null;
+          logged_at?: string | null;
+          symptoms?: unknown;
+          mood?: number | null;
+          energy?: number | null;
+          pain_level?: number | null;
+          sleep_hours?: number | null;
+          notes?: string | null;
+          ai_insight?: string | null;
+        };
+        Relationships: [];
+      };      support_group_members: {
+        Row: {
+          id: string;
+          group_id: string;
+          user_id: string;
+          created_at: string | null;
+        };
+        Insert: {
+          id?: string;
+          group_id: string;
+          user_id: string;
+          created_at?: string | null;
+        };
+        Update: {
+          id?: string;
+          group_id?: string;
+          user_id?: string;
+          created_at?: string | null;
+        };
+        Relationships: [];
+      };
+      insurance_claims: {
+        Row: {
+          id: string;
+          patient_id: string;
+          provider_id: string | null;
+          service_name: string;
+          amount_cents: number | null;
+          status: string | null;
+          created_at: string | null;
+        };
+        Insert: {
+          id?: string;
+          patient_id: string;
+          provider_id?: string | null;
+          service_name: string;
+          amount_cents?: number | null;
+          status?: string | null;
+          created_at?: string | null;
+        };
+        Update: {
+          id?: string;
+          patient_id?: string;
+          provider_id?: string | null;
+          service_name?: string;
+          amount_cents?: number | null;
+          status?: string | null;
+          created_at?: string | null;
+        };
+        Relationships: [];
+      };
+      wellness_assessments: {
+        Row: {
+          id: string;
+          patient_id: string;
+          assessment_type: string;
+          answers: unknown;
+          score: number | null;
+          completed_at: string | null;
+        };
+        Insert: {
+          id?: string;
+          patient_id: string;
+          assessment_type: string;
+          answers?: unknown;
+          score?: number | null;
+          completed_at?: string | null;
+        };
+        Update: {
+          id?: string;
+          patient_id?: string;
+          assessment_type?: string;
+          answers?: unknown;
+          score?: number | null;
+          completed_at?: string | null;
+        };
+        Relationships: [];
+      };      support_groups: {
         Row: {
           id: string;
           name: string;
@@ -555,3 +810,8 @@ export function getSupabaseAdminClient() {
 
   return adminClient;
 }
+
+
+
+
+

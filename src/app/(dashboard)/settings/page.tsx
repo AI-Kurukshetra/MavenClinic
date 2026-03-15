@@ -1,16 +1,20 @@
-import { ComingSoonState } from "@/components/health/coming-soon-state";
+﻿import type { Metadata } from "next";
 import { DashboardShell } from "@/components/health/dashboard-shell";
+import { PatientPartnerSettings } from "@/features/settings/patient-partner-settings";
+import { getPatientSettingsPageData } from "@/lib/data";
 
-export default function Page() {
+export const metadata: Metadata = {
+  title: "Settings - Maven Clinic",
+};
+
+export const revalidate = 0;
+
+export default async function SettingsPage() {
+  const data = await getPatientSettingsPageData();
+
   return (
-    <DashboardShell title="Settings" eyebrow="Profile and security">
-      <ComingSoonState
-        badge="Coming soon"
-        title="Account settings"
-        description="Profile preferences, notifications, and security controls will move into this protected settings area in the next pass."
-        dashboardHref="/dashboard"
-        dashboardLabel="Back to patient dashboard"
-      />
+    <DashboardShell title="Settings" eyebrow="Profile and partner access">
+      <PatientPartnerSettings {...data} />
     </DashboardShell>
   );
 }

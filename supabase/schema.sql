@@ -1,4 +1,4 @@
-﻿-- Enable extensions
+-- Enable extensions
 create extension if not exists "uuid-ossp";
 create extension if not exists "pgcrypto";
 
@@ -45,10 +45,33 @@ create table if not exists public.providers (
   bio text,
   languages text[] default array['English'],
   accepting_patients boolean default true,
+  suspended boolean default false,
+  suspended_at timestamptz,
+  suspended_reason text,
   consultation_fee_cents integer,
   rating numeric(3,2) default 5.0,
   total_reviews integer default 0
 );
+
+alter table public.providers
+  add column if not exists approval_status text
+  check (approval_status in ('pending','approved','rejected'))
+  default 'approved';
+
+alter table public.providers
+  add column if not exists approved_at timestamptz;
+
+alter table public.providers
+  add column if not exists approved_by uuid
+  references public.profiles(id);
+
+alter table public.providers
+  add column if not exists rejection_reason text;
+
+alter table public.providers
+  add column if not exists suspended boolean default false;
+alter table public.providers add column if not exists suspended_at timestamptz;
+alter table public.providers add column if not exists suspended_reason text;
 
 -- PROVIDER AVAILABILITY
 create table if not exists public.provider_availability (
@@ -246,7 +269,7 @@ create table if not exists public.employers (
 create table if not exists public.invitations (
   id uuid primary key default uuid_generate_v4(),
   email text not null,
-  role text check (role in ('provider', 'employer_admin', 'patient')),
+  role text check (role in ('provider', 'employer_admin', 'patient', 'partner', 'clinic_admin')), 
   token text unique default encode(gen_random_bytes(32), 'hex'),
   accepted boolean default false,
   expires_at timestamptz default now() + interval '7 days',
@@ -446,6 +469,7 @@ create policy "public_read_active_provider_profiles" on public.profiles
       select 1 from public.providers provider_profile
       where provider_profile.profile_id = profiles.id
         and provider_profile.accepting_patients = true
+        and coalesce(provider_profile.suspended, false) = false
     )
   );
 create policy "providers_read_assigned_patient_profiles" on public.profiles
@@ -464,7 +488,7 @@ drop policy if exists "providers_read_own_record" on public.providers;
 drop policy if exists "providers_update_own_record" on public.providers;
 drop policy if exists "admins_manage_providers" on public.providers;
 create policy "public_read_active_providers" on public.providers
-  for select using (accepting_patients = true or profile_id = auth.uid());
+  for select using ((accepting_patients = true and coalesce(suspended, false) = false) or profile_id = auth.uid());
 create policy "providers_read_own_record" on public.providers
   for select using (profile_id = auth.uid());
 create policy "providers_update_own_record" on public.providers
@@ -495,6 +519,7 @@ create policy "public_read_active_provider_availability" on public.provider_avai
       select 1 from public.providers p
       where p.id = provider_availability.provider_id
         and p.accepting_patients = true
+        and coalesce(p.suspended, false) = false
     )
   );
 create policy "providers_manage_own_availability" on public.provider_availability
@@ -653,12 +678,42 @@ drop policy if exists "Users read own notifications" on public.notifications;
 drop policy if exists "Users update own notifications" on public.notifications;
 drop policy if exists "Actors create notifications" on public.notifications;
 drop policy if exists "users_own_notifications" on public.notifications;
+drop policy if exists "users_update_own_notifications" on public.notifications;
 create policy "users_own_notifications" on public.notifications
   for select using (recipient_id = auth.uid());
 create policy "users_update_own_notifications" on public.notifications
   for update using (recipient_id = auth.uid())
   with check (recipient_id = auth.uid());
 
+
+drop policy if exists "patients_read_own_referrals" on public.referrals;
+drop policy if exists "providers_manage_referrals" on public.referrals;
+drop policy if exists "referred_providers_read_referrals" on public.referrals;
+create policy "patients_read_own_referrals" on public.referrals
+  for select using (patient_id = auth.uid());
+create policy "providers_manage_referrals" on public.referrals
+  for all using (
+    exists (
+      select 1 from public.providers p
+      where p.id = referrals.referring_provider_id
+        and p.profile_id = auth.uid()
+    )
+  )
+  with check (
+    exists (
+      select 1 from public.providers p
+      where p.id = referrals.referring_provider_id
+        and p.profile_id = auth.uid()
+    )
+  );
+create policy "referred_providers_read_referrals" on public.referrals
+  for select using (
+    exists (
+      select 1 from public.providers p
+      where p.id = referrals.referred_to_provider_id
+        and p.profile_id = auth.uid()
+    )
+  );
 drop policy if exists "patients_read_own_prescriptions" on public.prescriptions;
 drop policy if exists "providers_manage_prescriptions" on public.prescriptions;
 create policy "patients_read_own_prescriptions" on public.prescriptions
@@ -785,3 +840,125 @@ create policy "partners_read_shared_pregnancy_records" on public.pregnancy_recor
         and access_row.access_level in ('view_pregnancy', 'full')
     )
   );
+
+-- SUPER ADMIN CONFIGURATION
+create table if not exists public.feature_flags (
+  key text primary key,
+  enabled boolean default true,
+  updated_by uuid references public.profiles(id),
+  updated_at timestamptz default now()
+);
+
+create table if not exists public.platform_settings (
+  key text primary key,
+  value text,
+  updated_by uuid references public.profiles(id),
+  updated_at timestamptz default now()
+);
+
+alter table public.feature_flags enable row level security;
+alter table public.platform_settings enable row level security;
+
+drop policy if exists "admins_manage_feature_flags" on public.feature_flags;
+create policy "admins_manage_feature_flags" on public.feature_flags
+  for all using (
+    exists (
+      select 1 from public.profiles p
+      where p.id = auth.uid()
+        and p.role = 'super_admin'
+    )
+  )
+  with check (
+    exists (
+      select 1 from public.profiles p
+      where p.id = auth.uid()
+        and p.role = 'super_admin'
+    )
+  );
+
+drop policy if exists "admins_manage_platform_settings" on public.platform_settings;
+create policy "admins_manage_platform_settings" on public.platform_settings
+  for all using (
+    exists (
+      select 1 from public.profiles p
+      where p.id = auth.uid()
+        and p.role = 'super_admin'
+    )
+  )
+  with check (
+    exists (
+      select 1 from public.profiles p
+      where p.id = auth.uid()
+        and p.role = 'super_admin'
+    )
+  );
+
+create or replace function public.get_current_user_role()
+returns text
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select role
+  from public.profiles
+  where id = auth.uid()
+  limit 1;
+$$;
+
+grant execute on function public.get_current_user_role() to authenticated;
+
+
+
+
+alter table public.invitations add column if not exists invited_by uuid references public.profiles(id) on delete set null;
+alter table public.invitations add column if not exists metadata jsonb default '{}'::jsonb;
+
+
+
+alter table public.profiles add column if not exists insurance_group_number text;
+
+create table if not exists public.support_group_members (
+  id uuid primary key default uuid_generate_v4(),
+  group_id uuid references public.support_groups(id) on delete cascade not null,
+  user_id uuid references public.profiles(id) on delete cascade not null,
+  created_at timestamptz default now()
+);
+create unique index if not exists support_group_members_group_user_unique on public.support_group_members (group_id, user_id);
+
+create table if not exists public.insurance_claims (
+  id uuid primary key default uuid_generate_v4(),
+  patient_id uuid references public.profiles(id) on delete cascade not null,
+  provider_id uuid references public.providers(id) on delete set null,
+  service_name text not null,
+  amount_cents integer default 0,
+  status text check (status in ('pending', 'submitted', 'approved', 'denied', 'paid')) default 'pending',
+  created_at timestamptz default now()
+);
+
+create table if not exists public.wellness_assessments (
+  id uuid primary key default uuid_generate_v4(),
+  patient_id uuid references public.profiles(id) on delete cascade not null,
+  assessment_type text not null,
+  answers jsonb default '[]'::jsonb,
+  score integer,
+  completed_at timestamptz default now()
+);
+
+alter table public.support_group_members enable row level security;
+alter table public.insurance_claims enable row level security;
+alter table public.wellness_assessments enable row level security;
+
+drop policy if exists "patients_manage_support_group_memberships" on public.support_group_members;
+create policy "patients_manage_support_group_memberships" on public.support_group_members
+  for all using (user_id = auth.uid())
+  with check (user_id = auth.uid());
+
+drop policy if exists "patients_read_own_insurance_claims" on public.insurance_claims;
+create policy "patients_read_own_insurance_claims" on public.insurance_claims
+  for select using (patient_id = auth.uid());
+
+drop policy if exists "patients_manage_own_wellness_assessments" on public.wellness_assessments;
+create policy "patients_manage_own_wellness_assessments" on public.wellness_assessments
+  for all using (patient_id = auth.uid())
+  with check (patient_id = auth.uid());

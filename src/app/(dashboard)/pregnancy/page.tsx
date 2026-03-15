@@ -1,16 +1,20 @@
-import { ComingSoonState } from "@/components/health/coming-soon-state";
+import type { Metadata } from "next";
 import { DashboardShell } from "@/components/health/dashboard-shell";
+import { PregnancyPage } from "@/features/patient/pregnancy-page";
+import { getPatientPregnancyPageData } from "@/lib/patient-pages";
 
-export default function Page() {
+export const metadata: Metadata = {
+  title: "Pregnancy - Maven Clinic",
+};
+
+export const revalidate = 0;
+
+export default async function PregnancyRoute() {
+  const data = await getPatientPregnancyPageData();
+
   return (
-    <DashboardShell title="Pregnancy" eyebrow="Milestones">
-      <ComingSoonState
-        badge="Coming soon"
-        title="Pregnancy milestone tracker"
-        description="Pregnancy week-by-week updates, care checklists, and shared milestone views are protected by middleware and ready for the next build pass."
-        dashboardHref="/dashboard"
-        dashboardLabel="Back to patient dashboard"
-      />
+    <DashboardShell title="Pregnancy" eyebrow="Weekly milestone tracking">
+      <PregnancyPage {...data} />
     </DashboardShell>
   );
 }

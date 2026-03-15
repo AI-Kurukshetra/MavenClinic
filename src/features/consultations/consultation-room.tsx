@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, useTransition } from "react";
 import type { RealtimePostgresChangesPayload } from "@supabase/supabase-js";
 import { useRouter } from "next/navigation";
+import type { Route } from "next";
 import {
   FileText,
   Info,
@@ -28,6 +29,7 @@ import type { ConsultationRoomData } from "@/lib/appointments-data";
 
 type Props = ConsultationRoomData & {
   currentUserId: string;
+  returnHref?: string;
 };
 
 type ConsultationMessageRow = {
@@ -64,7 +66,7 @@ function formatElapsed(seconds: number) {
   return `${remainingSeconds}s elapsed`;
 }
 
-export function ConsultationRoom({ appointment, provider, conversationId, messages: initialMessages, currentUserId }: Props) {
+export function ConsultationRoom({ appointment, provider, conversationId, messages: initialMessages, currentUserId, returnHref = "/appointments" }: Props) {
   const router = useRouter();
   const [messages, setMessages] = useState(initialMessages);
   const [activePanelTab, setActivePanelTab] = useState<"chat" | "notes" | "info">("chat");
@@ -149,7 +151,7 @@ export function ConsultationRoom({ appointment, provider, conversationId, messag
         (payload: RealtimePostgresChangesPayload<Record<string, unknown>>) => {
           const row = payload.new as AppointmentRow;
           if (row.status === "completed" || row.status === "cancelled") {
-            router.push("/appointments");
+            router.push(returnHref as Route);
           }
 
           if (typeof row.notes === "string") {
@@ -164,7 +166,7 @@ export function ConsultationRoom({ appointment, provider, conversationId, messag
       void supabase.removeChannel(messagesChannel);
       void supabase.removeChannel(appointmentChannel);
     };
-  }, [appointment.id, conversationId, currentUserId, router]);
+  }, [appointment.id, conversationId, currentUserId, returnHref, router]);
 
   useEffect(() => {
     if (!dragging) {

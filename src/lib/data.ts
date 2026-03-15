@@ -1,16 +1,17 @@
-﻿import { addDays, differenceInCalendarDays, endOfDay, startOfDay, subDays } from "date-fns";
+import { addDays, differenceInCalendarDays, endOfDay, startOfDay, subDays } from "date-fns";
 import { getCurrentProfile, getCurrentUser } from "@/lib/auth";
 import { generateAiInsight } from "@/lib/ai";
 import { formatAvailabilityDay } from "@/lib/appointments";
 import {
   mockAppointments,
   mockCycleLogs,
-  mockEducation,
   mockMessages,
   mockProfile,
   mockProviders,
   mockSymptomLogs,
 } from "@/lib/mock-data";
+import { normalizeCarePlanMilestones, getCarePlanDateRange, getCarePlanProgress, type ProviderCarePlanMilestoneInput } from '@/lib/care-plans';
+import { mapEducationArticle, type EducationArticleRow } from '@/lib/education';
 import { getSupabaseAdminClient } from "@/lib/supabase/admin";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 import type { Appointment, CycleLog, LabResult, MessageThread, Prescription, Provider, RecordItem, SymptomLog } from "@/types/domain";
@@ -46,6 +47,43 @@ type ProviderDashboardAppointment = {
   chiefComplaint: string;
   status: Appointment["status"];
   type: Appointment["type"];
+};
+
+export type ProviderCarePlanListItem = {
+  id: string;
+  patientId: string;
+  patientName: string;
+  patientAvatarUrl: string | null;
+  title: string;
+  description: string;
+  status: string;
+  createdAt: string;
+  startDate: string;
+  endDate: string | null;
+  completedMilestones: number;
+  totalMilestones: number;
+  progress: number;
+  milestones: ProviderCarePlanMilestoneInput[];
+};
+
+export type ProviderCarePlanPatientOption = {
+  id: string;
+  name: string;
+  avatarUrl: string | null;
+  lastVisit: string;
+};
+
+export type ProviderCarePlanTemplateOption = {
+  id: string;
+  title: string;
+  description: string;
+  milestones: ProviderCarePlanMilestoneInput[];
+};
+
+export type ProviderCarePlansPageData = {
+  plans: ProviderCarePlanListItem[];
+  patients: ProviderCarePlanPatientOption[];
+  templates: ProviderCarePlanTemplateOption[];
 };
 
 function normalizeSymptoms(value: unknown): string[] {
@@ -211,6 +249,98 @@ function parseCarePlan(carePlan: {
   };
 }
 
+
+type PatientCarePlanPageMilestone = {
+  index: number;
+  title: string;
+  description: string;
+  targetDate: string;
+  completed: boolean;
+  category: string;
+};
+
+type PatientCarePlanPageData = {
+  id: string;
+  title: string;
+  description: string;
+  status: string;
+  createdAt: string;
+  startDate: string;
+  endDate?: string;
+  progress: number;
+  completedMilestones: number;
+  totalMilestones: number;
+  provider: {
+    id: string;
+    name: string;
+    avatarUrl?: string;
+    specialty: string;
+  };
+  milestones: PatientCarePlanPageMilestone[];
+};
+
+function parseCarePlanPageMilestones(value: unknown): PatientCarePlanPageMilestone[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.map((milestone, index) => {
+    const item = milestone as Record<string, unknown>;
+    return {
+      index,
+      title: String(item.title ?? `Milestone ${index + 1}`),
+      description: String(item.description ?? ""),
+      targetDate: String(item.targetDate ?? new Date().toISOString()),
+      completed: Boolean(item.completed),
+      category: String(item.category ?? "general"),
+    } satisfies PatientCarePlanPageMilestone;
+  });
+}
+
+function mapPatientCarePlanPageData(
+  carePlan: {
+    id: string;
+    provider_id: string | null;
+    title: string;
+    description: string | null;
+    status: string | null;
+    milestones: unknown;
+    created_at: string | null;
+    start_date?: string | null;
+    end_date?: string | null;
+  },
+  providerMap: Map<string, Provider>,
+): PatientCarePlanPageData {
+  const milestones = parseCarePlanPageMilestones(carePlan.milestones);
+  const { completedMilestones, totalMilestones, progress } = getCarePlanProgress(milestones);
+  const provider = carePlan.provider_id ? providerMap.get(carePlan.provider_id) : undefined;
+  const { startDate, endDate } = getCarePlanDateRange({
+    createdAt: carePlan.created_at,
+    startDate: carePlan.start_date ?? null,
+    endDate: carePlan.end_date ?? null,
+    milestones,
+  });
+
+  return {
+    id: carePlan.id,
+    title: carePlan.title,
+    description: carePlan.description ?? "Your provider has outlined the next steps for this plan.",
+    status: carePlan.status ?? "active",
+    createdAt: carePlan.created_at ?? new Date().toISOString(),
+    startDate,
+    endDate: endDate ?? undefined,
+    progress,
+    completedMilestones,
+    totalMilestones,
+    provider: {
+      id: carePlan.provider_id ?? "unknown-provider",
+      name: provider?.fullName ?? "Maven provider",
+      avatarUrl: provider?.avatarUrl,
+      specialty: provider?.specialtyLabel ?? "Care team",
+    },
+    milestones,
+  };
+}
 async function getCurrentProviderRecord() {
   const user = await getCurrentUser();
 
@@ -234,6 +364,70 @@ async function getCurrentProviderRecord() {
   }
 
   return { userId: user.id, providerId: data.id };
+}
+
+type CarePlanRowWithDates = {
+  id: string;
+  patient_id: string | null;
+  provider_id: string | null;
+  title: string;
+  description: string | null;
+  status: string | null;
+  milestones: unknown;
+  created_at: string | null;
+  start_date?: string | null;
+  end_date?: string | null;
+};
+
+function isMissingCarePlanDateColumnError(error: { message?: string } | null) {
+  return Boolean(error?.message?.includes("start_date") || error?.message?.includes("end_date"));
+}
+
+function coerceCarePlanRow(value: Record<string, unknown>): CarePlanRowWithDates {
+  return {
+    id: String(value.id ?? ""),
+    patient_id: typeof value.patient_id === "string" ? value.patient_id : null,
+    provider_id: typeof value.provider_id === "string" ? value.provider_id : null,
+    title: String(value.title ?? "Care plan"),
+    description: typeof value.description === "string" ? value.description : null,
+    status: typeof value.status === "string" ? value.status : null,
+    milestones: value.milestones,
+    created_at: typeof value.created_at === "string" ? value.created_at : null,
+    start_date: typeof value.start_date === "string" ? value.start_date : null,
+    end_date: typeof value.end_date === "string" ? value.end_date : null,
+  };
+}
+
+function mapProviderCarePlanListItem(
+  carePlan: CarePlanRowWithDates,
+  patientMap: Map<string, { name: string; avatarUrl: string | null }>,
+): ProviderCarePlanListItem {
+  const milestones = normalizeCarePlanMilestones(carePlan.milestones, carePlan.created_at ?? new Date().toISOString());
+  const { completedMilestones, totalMilestones, progress } = getCarePlanProgress(milestones);
+  const { startDate, endDate } = getCarePlanDateRange({
+    createdAt: carePlan.created_at,
+    startDate: carePlan.start_date ?? null,
+    endDate: carePlan.end_date ?? null,
+    milestones,
+  });
+  const patient = carePlan.patient_id ? patientMap.get(carePlan.patient_id) : undefined;
+
+  return {
+    id: carePlan.id,
+    patientId: carePlan.patient_id ?? "",
+    patientName: patient?.name ?? "Patient",
+    patientAvatarUrl: patient?.avatarUrl ?? null,
+    title: carePlan.title,
+    description: carePlan.description ?? "Care plan",
+    status: carePlan.status ?? "active",
+    createdAt: carePlan.created_at ?? new Date().toISOString(),
+    startDate,
+    endDate,
+    completedMilestones,
+    totalMilestones,
+    progress,
+    milestones,
+  };
 }
 
 async function getDashboardMessageThreads(userId: string): Promise<MessageThread[]> {
@@ -485,6 +679,155 @@ export async function getPatientDashboardData() {
   };
 }
 
+
+export async function getPatientCarePlansPageData() {
+  const user = await getCurrentUser();
+
+  if (!user) {
+    throw new Error("Authenticated patient required.");
+  }
+
+  const supabase = await getSupabaseServerClient();
+  const primaryResult = await supabase
+    .from("care_plans")
+    .select("id, patient_id, provider_id, title, description, status, milestones, created_at, start_date, end_date")
+    .eq("patient_id", user.id)
+    .order("created_at", { ascending: false });
+
+  const fallbackResult = isMissingCarePlanDateColumnError(primaryResult.error)
+    ? await supabase
+        .from("care_plans")
+        .select("id, patient_id, provider_id, title, description, status, milestones, created_at")
+        .eq("patient_id", user.id)
+        .order("created_at", { ascending: false })
+    : null;
+
+  const error = fallbackResult ? fallbackResult.error : primaryResult.error;
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  const carePlans = ((fallbackResult?.data ?? primaryResult.data ?? []) as Record<string, unknown>[]).map(coerceCarePlanRow);
+
+  const providerIds = Array.from(
+    new Set(
+      carePlans
+        .map((carePlan) => carePlan.provider_id)
+        .filter((value): value is string => Boolean(value)),
+    ),
+  );
+  const providerMap = providerIds.length ? await getProviderMap(providerIds) : new Map<string, Provider>();
+  const plans = carePlans.map((carePlan) => mapPatientCarePlanPageData(carePlan, providerMap));
+  const activePlan = plans.find((plan) => plan.status === "active") ?? null;
+  const previousPlans = plans.filter((plan) => plan.id !== activePlan?.id);
+
+  return {
+    activePlan,
+    previousPlans,
+  };
+}
+
+type PatientPartnerSettingsData = {
+  patientName: string;
+  patientEmail: string;
+  partner: {
+    accessId: string;
+    partnerId: string;
+    name: string;
+    email: string;
+    accessLevel: string;
+    accessLabel: string;
+    grantedAt: string | null;
+    avatarUrl?: string;
+  } | null;
+};
+
+export async function getPatientSettingsPageData(): Promise<PatientPartnerSettingsData> {
+  const user = await getCurrentUser();
+
+  if (!user) {
+    throw new Error("Authenticated patient required.");
+  }
+
+  const [profile, activePartnerAccess] = await Promise.all([
+    getCurrentProfile(user.id),
+    (async () => {
+      const admin = getSupabaseAdminClient();
+      const { data, error } = await admin
+        .from("partner_access")
+        .select("id, patient_id, partner_id, access_level, created_at, revoked_at")
+        .eq("patient_id", user.id)
+        .is("revoked_at", null)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (error) {
+        throw new Error(error.message);
+      }
+
+      return data as {
+        id: string;
+        patient_id: string;
+        partner_id: string;
+        access_level: string;
+        created_at: string | null;
+        revoked_at: string | null;
+      } | null;
+    })(),
+  ]);
+
+  const patientName = profile?.full_name ?? user.user_metadata?.full_name ?? user.email?.split("@")[0] ?? "Maven patient";
+  const patientEmail = user.email ?? "";
+
+  if (!activePartnerAccess) {
+    return {
+      patientName,
+      patientEmail,
+      partner: null,
+    };
+  }
+
+  const admin = getSupabaseAdminClient();
+  const [partnerProfileResult, partnerUserResult] = await Promise.all([
+    admin
+      .from("profiles")
+      .select("id, full_name, avatar_url")
+      .eq("id", activePartnerAccess.partner_id)
+      .maybeSingle(),
+    admin.auth.admin.getUserById(activePartnerAccess.partner_id),
+  ]);
+
+  if (partnerProfileResult.error) {
+    throw new Error(partnerProfileResult.error.message);
+  }
+
+  const partnerProfile = partnerProfileResult.data as { id: string; full_name: string | null; avatar_url: string | null } | null;
+  const partnerEmail = partnerUserResult.data.user?.email ?? "No email on file";
+  const accessLabel =
+    activePartnerAccess.access_level === "view_appointments"
+      ? "Appointments only"
+      : activePartnerAccess.access_level === "view_pregnancy"
+        ? "Pregnancy journey"
+        : activePartnerAccess.access_level === "view_fertility"
+          ? "Fertility journey"
+          : "Full access";
+
+  return {
+    patientName,
+    patientEmail,
+    partner: {
+      accessId: activePartnerAccess.id,
+      partnerId: activePartnerAccess.partner_id,
+      name: partnerProfile?.full_name ?? partnerEmail.split("@")[0] ?? "Partner",
+      email: partnerEmail,
+      accessLevel: activePartnerAccess.access_level,
+      accessLabel,
+      grantedAt: activePartnerAccess.created_at,
+      avatarUrl: partnerProfile?.avatar_url ?? undefined,
+    },
+  };
+}
 export async function getAppointmentsData() {
   const user = await getCurrentUser();
   const providerMap = await getProviderMap();
@@ -729,7 +1072,7 @@ export async function getRecordsData() {
       category: "Prescription",
       date: prescription.prescribedAt,
       provider: prescription.providerName,
-      summary: `${prescription.dosage} · ${prescription.frequency}`,
+      summary: `${prescription.dosage} ï¿½ ${prescription.frequency}`,
     })),
   ].sort((left, right) => new Date(right.date).getTime() - new Date(left.date).getTime());
 
@@ -841,7 +1184,57 @@ export async function getProviderLabsData() {
 }
 
 export async function getEducationData() {
-  return { articles: mockEducation };
+  const supabase = await getSupabaseServerClient();
+  const { data: content, error } = await supabase
+    .from("educational_content")
+    .select("id, title, content, category, life_stage, published, author_id, created_at")
+    .eq("published", true)
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return {
+    articles: ((content ?? []) as EducationArticleRow[]).map(mapEducationArticle),
+  };
+}
+
+export async function getEducationArticleData(articleId: string) {
+  const supabase = await getSupabaseServerClient();
+  const { data: articleRow, error } = await supabase
+    .from("educational_content")
+    .select("id, title, content, category, life_stage, published, author_id, created_at")
+    .eq("id", articleId)
+    .eq("published", true)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  if (!articleRow) {
+    return null;
+  }
+
+  const article = mapEducationArticle(articleRow as EducationArticleRow);
+  const { data: relatedRows, error: relatedError } = await supabase
+    .from("educational_content")
+    .select("id, title, content, category, life_stage, published, author_id, created_at")
+    .eq("published", true)
+    .eq("category", article.category)
+    .neq("id", article.id)
+    .order("created_at", { ascending: false })
+    .limit(3);
+
+  if (relatedError) {
+    throw new Error(relatedError.message);
+  }
+
+  return {
+    article,
+    relatedArticles: ((relatedRows ?? []) as EducationArticleRow[]).map(mapEducationArticle),
+  };
 }
 
 export async function getProviderDashboardData() {
@@ -1017,6 +1410,110 @@ export async function getProviderScheduleData() {
     status: appointment.status,
     type: appointment.type,
   })) as ProviderDashboardAppointment[];
+}
+
+export async function getProviderCarePlansPageData(): Promise<ProviderCarePlansPageData> {
+  const { providerId } = await getCurrentProviderRecord();
+  const admin = getSupabaseAdminClient();
+
+  const primaryPlansResult = await admin
+    .from("care_plans")
+    .select("id, patient_id, provider_id, title, description, status, milestones, created_at, start_date, end_date")
+    .eq("provider_id", providerId)
+    .order("created_at", { ascending: false });
+
+  const fallbackPlansResult = isMissingCarePlanDateColumnError(primaryPlansResult.error)
+    ? await admin
+        .from("care_plans")
+        .select("id, patient_id, provider_id, title, description, status, milestones, created_at")
+        .eq("provider_id", providerId)
+        .order("created_at", { ascending: false })
+    : null;
+
+  const plansError = fallbackPlansResult ? fallbackPlansResult.error : primaryPlansResult.error;
+  if (plansError) {
+    throw new Error(plansError.message);
+  }
+
+  const primaryTemplatesResult = await admin
+    .from("care_plans")
+    .select("id, patient_id, provider_id, title, description, status, milestones, created_at, start_date, end_date")
+    .is("patient_id", null)
+    .order("created_at", { ascending: false });
+
+  const fallbackTemplatesResult = isMissingCarePlanDateColumnError(primaryTemplatesResult.error)
+    ? await admin
+        .from("care_plans")
+        .select("id, patient_id, provider_id, title, description, status, milestones, created_at")
+        .is("patient_id", null)
+        .order("created_at", { ascending: false })
+    : null;
+
+  const templatesError = fallbackTemplatesResult ? fallbackTemplatesResult.error : primaryTemplatesResult.error;
+  if (templatesError) {
+    throw new Error(templatesError.message);
+  }
+
+  const { data: appointments, error: appointmentsError } = await admin
+    .from("appointments")
+    .select("patient_id, scheduled_at")
+    .eq("provider_id", providerId)
+    .order("scheduled_at", { ascending: false });
+
+  if (appointmentsError) {
+    throw new Error(appointmentsError.message);
+  }
+
+  const patientIds = Array.from(new Set((appointments ?? []).map((appointment) => appointment.patient_id).filter((value): value is string => Boolean(value))));
+  const { data: patientProfiles, error: patientProfilesError } = patientIds.length
+    ? await admin.from("profiles").select("id, full_name, avatar_url").in("id", patientIds)
+    : { data: [], error: null };
+
+  if (patientProfilesError) {
+    throw new Error(patientProfilesError.message);
+  }
+
+  const patientMap = new Map((patientProfiles ?? []).map((profile) => [
+    profile.id,
+    {
+      name: profile.full_name ?? "Patient",
+      avatarUrl: profile.avatar_url ?? null,
+    },
+  ]));
+
+  const lastVisitByPatient = new Map<string, string>();
+  for (const appointment of appointments ?? []) {
+    if (appointment.patient_id && !lastVisitByPatient.has(appointment.patient_id)) {
+      lastVisitByPatient.set(appointment.patient_id, appointment.scheduled_at);
+    }
+  }
+
+  const plans = ((fallbackPlansResult?.data ?? primaryPlansResult.data ?? []) as Record<string, unknown>[]).map((carePlan) =>
+    mapProviderCarePlanListItem(coerceCarePlanRow(carePlan), patientMap),
+  );
+
+  const patients: ProviderCarePlanPatientOption[] = patientIds.map((patientId) => ({
+    id: patientId,
+    name: patientMap.get(patientId)?.name ?? "Patient",
+    avatarUrl: patientMap.get(patientId)?.avatarUrl ?? null,
+    lastVisit: lastVisitByPatient.get(patientId) ?? new Date().toISOString(),
+  }));
+
+  const templates: ProviderCarePlanTemplateOption[] = ((fallbackTemplatesResult?.data ?? primaryTemplatesResult.data ?? []) as Record<string, unknown>[])
+    .map(coerceCarePlanRow)
+    .filter((template) => template.status === "template")
+    .map((template) => ({
+      id: template.id,
+      title: template.title,
+      description: template.description ?? "Reusable care plan template.",
+      milestones: normalizeCarePlanMilestones(template.milestones, new Date().toISOString()),
+    }));
+
+  return {
+    plans,
+    patients,
+    templates,
+  };
 }
 
 export async function getProviderPatientDetailData(patientId: string): Promise<{ id: string; name: string; dateOfBirth: string | null; lastVisit: string; carePlan: string; reason: string; upcomingAppointments: ProviderDashboardAppointment[]; recentAppointments: ProviderDashboardAppointment[] } | null> {
@@ -2019,3 +2516,440 @@ export async function getClinicDashboardData() {
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+type EmployerAnalyticsRangeKey = "30d" | "90d" | "180d" | "365d";
+
+type EmployerTrendPoint = {
+  date: string;
+  label: string;
+  fullLabel: string;
+  activeUsers: number;
+  appointments: number;
+  messages: number;
+};
+
+type EmployerSpecialtyPoint = {
+  name: string;
+  count: number;
+  percent: number;
+};
+
+type EmployerMonthlyComparisonRow = {
+  month: string;
+  activeUsers: number;
+  appointments: number;
+  messages: number;
+  newUsers: number;
+  completionRate: number;
+};
+
+export type EmployerAdvancedAnalyticsData = {
+  employerName: string;
+  selectedRange: EmployerAnalyticsRangeKey;
+  trends: EmployerTrendPoint[];
+  specialties: EmployerSpecialtyPoint[];
+  engagement: {
+    avgSessionsPerUserPerMonth: number;
+    avgHoursToFirstAppointment: number;
+    messageResponseRate: number;
+    carePlanAdoptionRate: number;
+  };
+  monthlyComparison: EmployerMonthlyComparisonRow[];
+};
+
+function formatDateKey(value: string | Date) {
+  const date = new Date(value);
+  const month = `${date.getMonth() + 1}`.padStart(2, "0");
+  const day = `${date.getDate()}`.padStart(2, "0");
+  return `${date.getFullYear()}-${month}-${day}`;
+}
+
+function formatMonthKey(value: string | Date) {
+  const date = new Date(value);
+  const month = `${date.getMonth() + 1}`.padStart(2, "0");
+  return `${date.getFullYear()}-${month}`;
+}
+
+function getEmployerRangeDays(range: string | undefined): EmployerAnalyticsRangeKey {
+  if (range === "30d" || range === "90d" || range === "180d" || range === "365d") {
+    return range;
+  }
+
+  return "180d";
+}
+
+function getRangeDayCount(range: EmployerAnalyticsRangeKey) {
+  if (range === "30d") return 30;
+  if (range === "90d") return 90;
+  if (range === "365d") return 365;
+  return 180;
+}
+
+function getDayTrendBuckets(range: EmployerAnalyticsRangeKey) {
+  const days = getRangeDayCount(range);
+  const buckets: Array<EmployerTrendPoint & { members: Set<string> }> = [];
+
+  for (let index = days - 1; index >= 0; index -= 1) {
+    const date = subDays(startOfDay(new Date()), index);
+    buckets.push({
+      date: formatDateKey(date),
+      label: new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric" }).format(date),
+      fullLabel: new Intl.DateTimeFormat("en-US", { month: "long", day: "numeric", year: "numeric" }).format(date),
+      activeUsers: 0,
+      appointments: 0,
+      messages: 0,
+      members: new Set<string>(),
+    });
+  }
+
+  return buckets;
+}
+
+export async function getEmployerAdvancedAnalyticsData(rangeInput?: string): Promise<EmployerAdvancedAnalyticsData> {
+  const user = await getCurrentUser();
+
+  if (!user) {
+    throw new Error("Authenticated employer admin required.");
+  }
+
+  const selectedRange = getEmployerRangeDays(rangeInput);
+  const admin = getSupabaseAdminClient();
+  const emptyData: EmployerAdvancedAnalyticsData = {
+    employerName: "Employer",
+    selectedRange,
+    trends: getDayTrendBuckets(selectedRange).map((bucket) => ({ date: bucket.date, label: bucket.label, fullLabel: bucket.fullLabel, activeUsers: bucket.activeUsers, appointments: bucket.appointments, messages: bucket.messages })), 
+    specialties: [],
+    engagement: {
+      avgSessionsPerUserPerMonth: 0,
+      avgHoursToFirstAppointment: 0,
+      messageResponseRate: 0,
+      carePlanAdoptionRate: 0,
+    },
+    monthlyComparison: getMonthBuckets(6).map((bucket) => ({
+      month: bucket.label,
+      activeUsers: 0,
+      appointments: 0,
+      messages: 0,
+      newUsers: 0,
+      completionRate: 0,
+    })),
+  };
+
+  const { data: profile, error: profileError } = await admin
+    .from("profiles")
+    .select("employer_id")
+    .eq("id", user.id)
+    .maybeSingle();
+
+  if (profileError) {
+    throw new Error(profileError.message);
+  }
+
+  if (!profile?.employer_id) {
+    return emptyData;
+  }
+
+  const [employerResult, employeesResult] = await Promise.all([
+    admin
+      .from("employers")
+      .select("company_name, employee_count")
+      .eq("id", profile.employer_id)
+      .maybeSingle(),
+    admin
+      .from("profiles")
+      .select("id, created_at")
+      .eq("employer_id", profile.employer_id)
+      .eq("role", "patient"),
+  ]);
+
+  if (employerResult.error) {
+    throw new Error(employerResult.error.message);
+  }
+
+  if (employeesResult.error) {
+    throw new Error(employeesResult.error.message);
+  }
+
+  const employerName = employerResult.data?.company_name ?? "Employer";
+  const employees = (employeesResult.data ?? []) as Array<{ id: string; created_at: string | null }>;
+  const employeeIds = employees.map((employee) => employee.id);
+
+  if (!employeeIds.length) {
+    return { ...emptyData, employerName };
+  }
+
+  const yearlyStart = subDays(startOfDay(new Date()), 364).toISOString();
+  const [appointmentsResult, carePlansResult, conversationsResult] = await Promise.all([
+    admin
+      .from("appointments")
+      .select("id, patient_id, provider_id, status, scheduled_at, created_at")
+      .in("patient_id", employeeIds)
+      .gte("scheduled_at", yearlyStart),
+    admin
+      .from("care_plans")
+      .select("patient_id, status")
+      .in("patient_id", employeeIds),
+    admin
+      .from("conversations")
+      .select("id, patient_id, provider_profile_id, created_at")
+      .in("patient_id", employeeIds)
+      .gte("created_at", yearlyStart),
+  ]);
+
+  if (appointmentsResult.error) {
+    throw new Error(appointmentsResult.error.message);
+  }
+  if (carePlansResult.error) {
+    throw new Error(carePlansResult.error.message);
+  }
+  if (conversationsResult.error) {
+    throw new Error(conversationsResult.error.message);
+  }
+
+  const appointments = (appointmentsResult.data ?? []) as Array<{
+    id: string;
+    patient_id: string;
+    provider_id: string | null;
+    status: string | null;
+    scheduled_at: string;
+    created_at: string | null;
+  }>;
+  const carePlans = (carePlansResult.data ?? []) as Array<{ patient_id: string | null; status: string | null }>;
+  const conversations = (conversationsResult.data ?? []) as Array<{
+    id: string;
+    patient_id: string;
+    provider_profile_id: string | null;
+    created_at: string | null;
+  }>;
+
+  const conversationIds = conversations.map((conversation) => conversation.id);
+  const messagesResult = conversationIds.length
+    ? await admin
+        .from("messages")
+        .select("conversation_id, sender_id, created_at")
+        .in("conversation_id", conversationIds)
+        .gte("created_at", yearlyStart)
+    : { data: [], error: null };
+
+  if (messagesResult.error) {
+    throw new Error(messagesResult.error.message);
+  }
+
+  const messages = (messagesResult.data ?? []) as Array<{
+    conversation_id: string;
+    sender_id: string | null;
+    created_at: string | null;
+  }>;
+
+  const providerIds = Array.from(new Set(appointments.map((appointment) => appointment.provider_id).filter((value): value is string => Boolean(value))));
+  const providersResult = providerIds.length
+    ? await admin.from("providers").select("id, specialty").in("id", providerIds)
+    : { data: [], error: null };
+
+  if (providersResult.error) {
+    throw new Error(providersResult.error.message);
+  }
+
+  const specialtyMap = new Map(((providersResult.data ?? []) as Array<{ id: string; specialty: string }>).map((provider) => [provider.id, formatProviderSpecialtyLabel(provider.specialty)]));
+  const trendBuckets = getDayTrendBuckets(selectedRange);
+  const trendMap = new Map(trendBuckets.map((bucket) => [bucket.date, bucket]));
+  const comparisonBuckets = getMonthBuckets(6).map((bucket) => ({
+    ...bucket,
+    appointments: 0,
+    messages: 0,
+    newUsers: 0,
+    completed: 0,
+    eligible: 0,
+  }));
+  const comparisonMap = new Map(comparisonBuckets.map((bucket) => [formatMonthKey(bucket.start), bucket]));
+  const selectedStart = trendBuckets[0] ? startOfDay(new Date(trendBuckets[0].date)) : subDays(startOfDay(new Date()), getRangeDayCount(selectedRange) - 1);
+  const activeCarePlanPatients = new Set(carePlans.filter((plan) => plan.patient_id && (plan.status ?? "active") === "active").map((plan) => String(plan.patient_id)));
+  const specialtyCounts = new Map<string, number>();
+
+  for (const employee of employees) {
+    if (!employee.created_at) {
+      continue;
+    }
+
+    const comparisonBucket = comparisonMap.get(formatMonthKey(employee.created_at));
+    if (comparisonBucket) {
+      comparisonBucket.newUsers += 1;
+    }
+  }
+
+  for (const appointment of appointments) {
+    const scheduledAt = new Date(appointment.scheduled_at);
+    const dayBucket = trendMap.get(formatDateKey(scheduledAt));
+    if (dayBucket) {
+      dayBucket.appointments += 1;
+      dayBucket.members.add(appointment.patient_id);
+    }
+
+    const comparisonBucket = comparisonMap.get(formatMonthKey(scheduledAt));
+    if (comparisonBucket) {
+      comparisonBucket.appointments += 1;
+      comparisonBucket.members.add(appointment.patient_id);
+      if (appointment.status !== "cancelled" && appointment.status !== "no_show") {
+        comparisonBucket.eligible += 1;
+      }
+      if (appointment.status === "completed") {
+        comparisonBucket.completed += 1;
+      }
+    }
+
+    if (scheduledAt >= selectedStart) {
+      const specialty = appointment.provider_id ? specialtyMap.get(appointment.provider_id) ?? "General" : "General";
+      specialtyCounts.set(specialty, (specialtyCounts.get(specialty) ?? 0) + 1);
+    }
+  }
+
+  const conversationPatientMap = new Map(conversations.map((conversation) => [conversation.id, conversation.patient_id]));
+  for (const conversation of conversations) {
+    if (!conversation.created_at) {
+      continue;
+    }
+
+    const conversationDate = new Date(conversation.created_at);
+    const dayBucket = trendMap.get(formatDateKey(conversationDate));
+    if (dayBucket) {
+      dayBucket.members.add(conversation.patient_id);
+    }
+
+    const comparisonBucket = comparisonMap.get(formatMonthKey(conversationDate));
+    if (comparisonBucket) {
+      comparisonBucket.members.add(conversation.patient_id);
+    }
+  }
+
+  for (const message of messages) {
+    if (!message.created_at) {
+      continue;
+    }
+
+    const patientId = conversationPatientMap.get(message.conversation_id);
+    if (!patientId) {
+      continue;
+    }
+
+    const messageDate = new Date(message.created_at);
+    const dayBucket = trendMap.get(formatDateKey(messageDate));
+    if (dayBucket) {
+      dayBucket.messages += 1;
+      dayBucket.members.add(patientId);
+    }
+
+    const comparisonBucket = comparisonMap.get(formatMonthKey(messageDate));
+    if (comparisonBucket) {
+      comparisonBucket.messages += 1;
+      comparisonBucket.members.add(patientId);
+    }
+  }
+
+  const trendRows = trendBuckets.map(({ members, ...bucket }) => ({
+    ...bucket,
+    activeUsers: members.size,
+  }));
+
+  const specialtyTotal = Array.from(specialtyCounts.values()).reduce((sum, value) => sum + value, 0);
+  const specialties = Array.from(specialtyCounts.entries())
+    .map(([name, count]) => ({
+      name,
+      count,
+      percent: specialtyTotal ? Math.round((count / specialtyTotal) * 100) : 0,
+    }))
+    .sort((left, right) => right.count - left.count);
+
+  const activeUsersInRange = new Set(trendBuckets.flatMap((bucket) => Array.from(bucket.members))).size;
+  const selectedAppointments = appointments.filter((appointment) => new Date(appointment.scheduled_at) >= selectedStart).length;
+  const selectedConversations = conversations.filter((conversation) => conversation.created_at && new Date(conversation.created_at) >= selectedStart).length;
+  const selectedMessages = messages.filter((message) => message.created_at && new Date(message.created_at) >= selectedStart).length;
+  const monthSpan = Math.max(1, getRangeDayCount(selectedRange) / 30);
+  const avgSessionsPerUserPerMonth = activeUsersInRange ? Number((((selectedAppointments + selectedConversations + selectedMessages) / activeUsersInRange) / monthSpan).toFixed(1)) : 0;
+
+  const firstAppointmentMap = new Map<string, Date>();
+  for (const appointment of appointments) {
+    const current = firstAppointmentMap.get(appointment.patient_id);
+    const scheduledAt = new Date(appointment.scheduled_at);
+    if (!current || scheduledAt < current) {
+      firstAppointmentMap.set(appointment.patient_id, scheduledAt);
+    }
+  }
+  const firstAppointmentSamples = employees
+    .map((employee) => {
+      const firstAppointment = firstAppointmentMap.get(employee.id);
+      if (!firstAppointment || !employee.created_at) {
+        return null;
+      }
+
+      const diff = firstAppointment.getTime() - new Date(employee.created_at).getTime();
+      return diff > 0 ? diff / (1000 * 60 * 60) : null;
+    })
+    .filter((value): value is number => value !== null);
+  const avgHoursToFirstAppointment = firstAppointmentSamples.length ? Math.round(firstAppointmentSamples.reduce((sum, value) => sum + value, 0) / firstAppointmentSamples.length) : 0;
+
+  const messagesByConversation = new Map<string, Array<{ senderId: string | null; createdAt: string }>>();
+  for (const message of messages) {
+    if (!message.created_at) continue;
+    const current = messagesByConversation.get(message.conversation_id) ?? [];
+    current.push({ senderId: message.sender_id, createdAt: message.created_at });
+    messagesByConversation.set(message.conversation_id, current);
+  }
+  let patientMessages = 0;
+  let repliedPatientMessages = 0;
+  for (const conversation of conversations) {
+    const patientId = conversation.patient_id;
+    const ordered = (messagesByConversation.get(conversation.id) ?? []).sort((left, right) => new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime());
+    ordered.forEach((message, index) => {
+      if (message.senderId !== patientId) {
+        return;
+      }
+      patientMessages += 1;
+      const replied = ordered.slice(index + 1).some((next) => next.senderId && next.senderId !== patientId);
+      if (replied) {
+        repliedPatientMessages += 1;
+      }
+    });
+  }
+  const messageResponseRate = patientMessages ? Math.round((repliedPatientMessages / patientMessages) * 100) : 0;
+  const carePlanAdoptionRate = employeeIds.length ? Math.round((activeCarePlanPatients.size / employeeIds.length) * 100) : 0;
+
+  const monthlyComparison = comparisonBuckets.map((bucket) => ({
+    month: bucket.label,
+    activeUsers: bucket.members.size,
+    appointments: bucket.appointments,
+    messages: bucket.messages,
+    newUsers: bucket.newUsers,
+    completionRate: bucket.eligible ? Math.round((bucket.completed / bucket.eligible) * 100) : 0,
+  }));
+
+  return {
+    employerName,
+    selectedRange,
+    trends: trendRows,
+    specialties,
+    engagement: {
+      avgSessionsPerUserPerMonth,
+      avgHoursToFirstAppointment,
+      messageResponseRate,
+      carePlanAdoptionRate,
+    },
+    monthlyComparison,
+  };
+}

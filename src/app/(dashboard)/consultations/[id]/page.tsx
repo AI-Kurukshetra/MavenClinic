@@ -1,7 +1,7 @@
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { ConsultationRoom } from "@/features/consultations/consultation-room";
-import { getCurrentUser } from "@/lib/auth";
+import { getCurrentProfile, getCurrentUser } from "@/lib/auth";
 import { getConsultationRoomData } from "@/lib/appointments-data";
 import { publicEnv } from "@/lib/env";
 
@@ -12,10 +12,13 @@ export default async function ConsultationRoomPage({ params }: { params: Promise
     redirect("/login");
   }
 
+  const profile = await getCurrentProfile(user.id);
+  const fallbackPath = profile?.role === "provider" ? "/provider/appointments" : "/appointments";
+
   let data = await getConsultationRoomData(id);
 
   if (!data) {
-    redirect("/appointments");
+    redirect(fallbackPath);
   }
 
   if (!data.appointment.videoRoomUrl) {
@@ -35,9 +38,9 @@ export default async function ConsultationRoomPage({ params }: { params: Promise
     data = await getConsultationRoomData(id);
 
     if (!data) {
-      redirect("/appointments");
+      redirect(fallbackPath);
     }
   }
 
-  return <ConsultationRoom {...data} currentUserId={user.id} />;
+  return <ConsultationRoom {...data} currentUserId={user.id} returnHref={fallbackPath} />;
 }

@@ -31,6 +31,14 @@ function getServerFieldErrors(serverError?: string) {
   return {};
 }
 
+function getServerMessage(serverError?: string) {
+  if (serverError === "account_suspended") {
+    return "Your provider account has been suspended. Please contact support@mavenclinic.com";
+  }
+
+  return serverError ?? null;
+}
+
 function getSafeNextPath(value: string | undefined) {
   return value && value.startsWith("/") && !value.startsWith("//") ? value : null;
 }
@@ -103,7 +111,7 @@ export function LoginForm(props: Props) {
     }
   }
 
-  const genericError = submitError ?? (serverError && !serverFieldErrors.email && !serverFieldErrors.password ? serverError : null);
+  const genericError = submitError ?? (serverError && !serverFieldErrors.email && !serverFieldErrors.password ? getServerMessage(serverError) : null);
 
   return (
     <div className="space-y-8 auth-page-enter">
@@ -192,8 +200,9 @@ export function LoginForm(props: Props) {
             Create your account
           </Link>
         </p>
-        <p className="text-xs tracking-[0.14em] text-slate-400">HIPAA Compliant · SOC 2 · Your data is never sold</p>
+        <p className="text-xs tracking-[0.14em] text-slate-400">HIPAA Compliant | SOC 2 | Your data is never sold</p>
       </div>
     </div>
   );
 }
+

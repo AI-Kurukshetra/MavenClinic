@@ -37,12 +37,14 @@ export function SearchInput({ value, onChange, placeholder }: { value: string; o
   );
 }
 
-export function ProviderStatusBadge({ status }: { status: "Active and accepting" | "Inactive" | "Pending approval" }) {
+export function ProviderStatusBadge({ status }: { status: "Active and accepting" | "Inactive" | "Pending approval" | "Suspended" }) {
   const className = status === "Active and accepting"
     ? "bg-[rgba(61,191,173,0.12)] text-[var(--teal-700)]"
     : status === "Pending approval"
       ? "bg-[rgba(245,158,11,0.12)] text-amber-600"
-      : "bg-[rgba(148,163,184,0.14)] text-slate-600";
+      : status === "Suspended"
+        ? "bg-[rgba(212,88,123,0.12)] text-[var(--rose-700)]"
+        : "bg-[rgba(148,163,184,0.14)] text-slate-600";
 
   return <span className={`inline-flex rounded-full px-3 py-1 text-xs font-medium ${className}`}>{status}</span>;
 }
@@ -67,3 +69,4 @@ export function NotificationTypeBadge({ type }: { type: string }) {
 
   return <span className={`inline-flex rounded-full px-3 py-1 text-xs font-medium ${className}`}>{type}</span>;
 }
+

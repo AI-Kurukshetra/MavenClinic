@@ -1,5 +1,5 @@
 import { addDays, endOfDay, startOfDay } from "date-fns";
-import { getCurrentUser } from "@/lib/auth";
+import { getCurrentProfile, getCurrentUser } from "@/lib/auth";
 import {
   buildAvailabilityByDate,
   findNextAvailableSlot,
@@ -297,16 +297,37 @@ export async function getConsultationRoomData(appointmentId: string): Promise<Co
   const user = await getCurrentUser();
 
   if (!user) {
-    throw new Error("Authenticated patient required.");
+    throw new Error("Authenticated user required.");
   }
 
+  const profile = await getCurrentProfile(user.id);
   const supabase = await getSupabaseServerClient();
-  const { data: appointmentRow, error: appointmentError } = await supabase
+  let appointmentQuery = supabase
     .from("appointments")
     .select("id, patient_id, provider_id, scheduled_at, duration_minutes, type, status, chief_complaint, video_room_url, notes, payment_method, started_at")
-    .eq("id", appointmentId)
-    .eq("patient_id", user.id)
-    .maybeSingle();
+    .eq("id", appointmentId);
+
+  if (profile?.role === "provider") {
+    const { data: providerRecord, error: providerRecordError } = await supabase
+      .from("providers")
+      .select("id")
+      .eq("profile_id", user.id)
+      .maybeSingle();
+
+    if (providerRecordError) {
+      throw new Error(providerRecordError.message);
+    }
+
+    if (!providerRecord?.id) {
+      return null;
+    }
+
+    appointmentQuery = appointmentQuery.eq("provider_id", providerRecord.id);
+  } else {
+    appointmentQuery = appointmentQuery.eq("patient_id", user.id);
+  }
+
+  const { data: appointmentRow, error: appointmentError } = await appointmentQuery.maybeSingle();
 
   if (appointmentError) {
     throw new Error(appointmentError.message);
@@ -349,7 +370,7 @@ export async function getConsultationRoomData(appointmentId: string): Promise<Co
   const { data: existingConversationRow, error: conversationError } = await supabase
     .from("conversations")
     .select("id")
-    .eq("patient_id", user.id)
+    .eq("patient_id", appointmentRow.patient_id)
     .eq("provider_profile_id", providerRow.profile_id)
     .maybeSingle();
 
@@ -362,7 +383,7 @@ export async function getConsultationRoomData(appointmentId: string): Promise<Co
   if (!conversationRow) {
     const insertResult = await supabase
       .from("conversations")
-      .insert({ patient_id: user.id, provider_profile_id: providerRow.profile_id })
+      .insert({ patient_id: appointmentRow.patient_id, provider_profile_id: providerRow.profile_id })
       .select("id")
       .single();
 
@@ -375,12 +396,19 @@ export async function getConsultationRoomData(appointmentId: string): Promise<Co
 
   if (appointmentRow.status === "scheduled") {
     const startedAt = new Date().toISOString();
-    const { error: startError } = await supabase
+    let startQuery = supabase
       .from("appointments")
       .update({ status: "in_progress", started_at: startedAt, updated_at: startedAt })
       .eq("id", appointmentRow.id)
-      .eq("patient_id", user.id)
       .eq("status", "scheduled");
+
+    if (profile?.role === "provider") {
+      startQuery = startQuery.eq("provider_id", appointmentRow.provider_id);
+    } else {
+      startQuery = startQuery.eq("patient_id", appointmentRow.patient_id);
+    }
+
+    const { error: startError } = await startQuery;
 
     if (startError) {
       throw new Error(startError.message);
@@ -447,6 +475,3 @@ export async function getConsultationRoomData(appointmentId: string): Promise<Co
     })),
   };
 }
-
-
-

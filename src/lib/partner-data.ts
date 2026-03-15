@@ -1,4 +1,4 @@
-import { addDays, differenceInCalendarDays, format, isAfter, isBefore, isSameDay, startOfMonth, startOfWeek } from "date-fns";
+﻿import { addDays, differenceInCalendarDays, format, isAfter, isBefore, isSameDay, startOfMonth, startOfWeek } from "date-fns";
 import { redirect } from "next/navigation";
 import { getCurrentProfile, getCurrentUser } from "@/lib/auth";
 import { getSpecialtyLabel } from "@/lib/appointments";
@@ -52,7 +52,7 @@ type PregnancyRecordRow = {
 type CycleLogRow = {
   id: string;
   patient_id: string | null;
-  period_start: string;
+  period_start: string | null;
   period_end: string | null;
   cycle_length: number | null;
   ovulation_date: string | null;
@@ -102,6 +102,7 @@ export type PartnerAccessFlags = {
 };
 
 export type PartnerPortalContext = {
+  hasActiveAccess: boolean;
   accessId: string;
   accessLevel: PartnerAccessLevel;
   accessLabel: string;
@@ -314,8 +315,28 @@ export async function getPartnerPortalContext(): Promise<PartnerPortalContext> {
       .maybeSingle(),
   );
 
+  const partnerProfile = await getCurrentProfile(user.id);
+  const partnerName = partnerProfile?.full_name ?? user.email?.split("@")[0] ?? "Support partner";
+
   if (!access) {
-    redirect("/login");
+    return {
+      hasActiveAccess: false,
+      accessId: `pending-${user.id}`,
+      accessLevel: "view_appointments",
+      accessLabel: "No access shared yet",
+      grantedAt: null,
+      patientId: "",
+      patientName: "your partner",
+      patientFirstName: "your partner",
+      partnerId: user.id,
+      partnerName,
+      flags: {
+        appointments: false,
+        pregnancy: false,
+        fertility: false,
+        messages: false,
+      },
+    };
   }
 
   const profiles = await safeRows<ProfileNameRow>(
@@ -323,10 +344,9 @@ export async function getPartnerPortalContext(): Promise<PartnerPortalContext> {
   );
   const profileMap = new Map(profiles.map((profile) => [profile.id, profile.full_name ?? "Maven member"]));
   const patientName = profileMap.get(access.patient_id) ?? "Maven patient";
-  const partnerProfile = await getCurrentProfile(user.id);
-  const partnerName = partnerProfile?.full_name ?? profileMap.get(access.partner_id) ?? user.email?.split("@")[0] ?? "Support partner";
 
   return {
+    hasActiveAccess: true,
     accessId: access.id,
     accessLevel: access.access_level,
     accessLabel: accessDescriptions[access.access_level],
@@ -464,6 +484,10 @@ async function getFertilitySummary(context: PartnerPortalContext): Promise<Partn
       .maybeSingle(),
   );
 
+  if (!latestLog.period_start) {
+    return null;
+  }
+
   const cycleLength = latestLog.cycle_length ?? 28;
   const today = new Date();
   const periodStart = new Date(latestLog.period_start);
@@ -480,6 +504,7 @@ async function getFertilitySummary(context: PartnerPortalContext): Promise<Partn
     const date = addDays(gridStart, index);
     const iso = format(date, "yyyy-MM-dd");
     const isPeriod = logs.some((log) => {
+      if (!log.period_start) return false;
       const start = new Date(log.period_start);
       const end = new Date(log.period_end ?? log.period_start);
       return !isBefore(date, start) && !isAfter(date, end);
@@ -588,10 +613,10 @@ async function getRecentActivity(context: PartnerPortalContext): Promise<Partner
 export async function getPartnerDashboardPageData() {
   const context = await getPartnerPortalContext();
   const [appointments, pregnancy, fertility, recentActivity] = await Promise.all([
-    context.flags.appointments ? getUpcomingAppointments(context.patientId) : Promise.resolve([]),
-    context.flags.pregnancy ? getPregnancySummary(context) : Promise.resolve(null),
-    context.flags.fertility ? getFertilitySummary(context) : Promise.resolve(null),
-    getRecentActivity(context),
+    context.hasActiveAccess && context.flags.appointments ? getUpcomingAppointments(context.patientId) : Promise.resolve([]),
+    context.hasActiveAccess && context.flags.pregnancy ? getPregnancySummary(context) : Promise.resolve(null),
+    context.hasActiveAccess && context.flags.fertility ? getFertilitySummary(context) : Promise.resolve(null),
+    context.hasActiveAccess ? getRecentActivity(context) : Promise.resolve([]),
   ]);
 
   return {
@@ -606,25 +631,25 @@ export async function getPartnerDashboardPageData() {
 
 export async function getPartnerAppointmentsPageData() {
   const context = await getPartnerPortalContext();
-  const appointments = context.flags.appointments ? await getUpcomingAppointments(context.patientId) : [];
+  const appointments = context.hasActiveAccess && context.flags.appointments ? await getUpcomingAppointments(context.patientId) : [];
   return { context, appointments };
 }
 
 export async function getPartnerPregnancyPageData() {
   const context = await getPartnerPortalContext();
-  const pregnancy = context.flags.pregnancy ? await getPregnancySummary(context) : null;
+  const pregnancy = context.hasActiveAccess && context.flags.pregnancy ? await getPregnancySummary(context) : null;
   return { context, pregnancy };
 }
 
 export async function getPartnerFertilityPageData() {
   const context = await getPartnerPortalContext();
-  const fertility = context.flags.fertility ? await getFertilitySummary(context) : null;
+  const fertility = context.hasActiveAccess && context.flags.fertility ? await getFertilitySummary(context) : null;
   return { context, fertility };
 }
 
 export async function getPartnerMessagesPageData() {
   const context = await getPartnerPortalContext();
-  if (!context.flags.messages) {
+  if (!context.hasActiveAccess || !context.flags.messages) {
     return { context, conversations: [] as PartnerConversation[] };
   }
 
@@ -679,3 +704,7 @@ export async function getPartnerSettingsPageData() {
     accessChips: getAccessChips(context.flags),
   };
 }
+
+
+
+

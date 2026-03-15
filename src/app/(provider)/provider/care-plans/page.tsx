@@ -1,16 +1,18 @@
-import { ComingSoonState } from "@/components/health/coming-soon-state";
 import { DashboardShell } from "@/components/health/dashboard-shell";
+import { ProviderCarePlansPage } from "@/features/care-plans/provider-care-plans-page";
+import { getProviderCarePlansPageData } from "@/lib/data";
 
-export default function ProviderCarePlansPage() {
+function getParam(value: string | string[] | undefined) {
+  return typeof value === "string" ? value : null;
+}
+
+export default async function ProviderCarePlansRoute({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
+  const [data, params] = await Promise.all([getProviderCarePlansPageData(), searchParams]);
+  const initialPatientId = getParam(params.patientId);
+
   return (
     <DashboardShell title="Care plans" eyebrow="Provider workflow" section="provider">
-      <ComingSoonState
-        badge="Provider workflow"
-        title="Care plan authoring is queued"
-        description="This route will centralize provider-authored care plans, milestone progress, and follow-up tasks for each patient."
-        dashboardHref="/provider/dashboard"
-        dashboardLabel="Back to provider dashboard"
-      />
+      <ProviderCarePlansPage {...data} initialPatientId={initialPatientId} />
     </DashboardShell>
   );
 }

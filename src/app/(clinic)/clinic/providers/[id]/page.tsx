@@ -1,4 +1,4 @@
-import { notFound } from "next/navigation";
+﻿import { notFound } from "next/navigation";
 import { Toast } from "@/components/ui/Toast";
 import { Card } from "@/components/ui/card";
 import { DashboardShell } from "@/components/health/dashboard-shell";
@@ -42,11 +42,11 @@ export default async function ClinicProviderDetailPage({
               <div>
                 <p className="text-sm uppercase tracking-[0.22em] text-[var(--rose-700)]">Provider detail</p>
                 <h2 className="mt-2 text-3xl font-semibold tracking-tight">{provider.name}</h2>
-                <p className="mt-2 text-sm text-[var(--foreground-muted)]">{provider.specialty}</p>
-                <p className="mt-3 max-w-2xl text-sm leading-7 text-[var(--foreground-muted)]">{provider.bio}</p>
+                <div className="mt-2 flex flex-wrap items-center gap-3"><p className="text-sm text-[var(--foreground-muted)]">{provider.specialty}</p><span className={provider.status === "Suspended" ? "inline-flex rounded-full bg-[rgba(212,88,123,0.12)] px-3 py-1 text-xs font-medium text-[var(--rose-700)]" : provider.status === "Active and accepting" ? "inline-flex rounded-full bg-[rgba(61,191,173,0.12)] px-3 py-1 text-xs font-medium text-[var(--teal-700)]" : provider.status === "Pending approval" ? "inline-flex rounded-full bg-[rgba(245,158,11,0.12)] px-3 py-1 text-xs font-medium text-amber-600" : "inline-flex rounded-full bg-[rgba(148,163,184,0.14)] px-3 py-1 text-xs font-medium text-slate-600"}>{provider.status}</span></div>
+                <p className="mt-3 max-w-2xl text-sm leading-7 text-[var(--foreground-muted)]">{provider.bio}</p>{provider.suspendedReason ? <p className="mt-3 text-sm text-[var(--rose-700)]">Suspension reason: {provider.suspendedReason}</p> : null}
               </div>
             </div>
-            <ClinicProviderDetailActions providerId={provider.id} redirectTo={`/clinic/providers/${provider.id}`} />
+            <ClinicProviderDetailActions providerId={provider.id} providerName={provider.name} providerStatus={provider.status} redirectTo={`/clinic/providers/${provider.id}`} />
           </div>
         </Card>
 

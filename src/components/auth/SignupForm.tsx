@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import Link from "next/link";
 import { FormEvent, useMemo, useState } from "react";
@@ -11,6 +11,9 @@ import { cn } from "@/lib/utils";
 type Props = {
   action: (formData: FormData) => void | Promise<void>;
   serverError?: string;
+  invitationToken?: string;
+  invitedEmail?: string;
+  invitedEmployerName?: string;
 };
 
 function SubmitButton() {
@@ -50,14 +53,15 @@ const strengthClasses = [
   "bg-[var(--teal-400)]",
 ];
 
-export function SignupForm({ action, serverError }: Props) {
+export function SignupForm({ action, serverError, invitationToken, invitedEmail, invitedEmployerName }: Props) {
   const [fullName, setFullName] = useState("");
-  const [email, setEmail] = useState("");
+  const [email, setEmail] = useState(invitedEmail ?? "");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [fieldErrors, setFieldErrors] = useState<Partial<Record<"fullName" | "email" | "password", string>>>({});
   const serverFieldErrors = useMemo(() => getServerFieldErrors(serverError), [serverError]);
   const strength = getPasswordStrength(password);
+  const isInviteSignup = Boolean(invitationToken && invitedEmail);
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     const result = signupSchema.safeParse({ fullName, email, password });
@@ -102,11 +106,19 @@ export function SignupForm({ action, serverError }: Props) {
         </div>
       </div>
 
+      {isInviteSignup ? (
+        <div className="rounded-2xl border border-[rgba(61,191,173,0.2)] bg-[rgba(61,191,173,0.08)] px-4 py-3 text-sm text-[var(--foreground)]">
+          You are joining through an employer invitation{invitedEmployerName ? ` from ${invitedEmployerName}` : ""}. Your account will be linked automatically after signup.
+        </div>
+      ) : null}
+
       {serverError && !serverFieldErrors.email && !serverFieldErrors.password ? (
         <div className="rounded-2xl border border-[rgba(212,88,123,0.14)] bg-[var(--rose-50)] px-4 py-3 text-sm text-[var(--rose-700)]">{serverError}</div>
       ) : null}
 
       <form action={action} onSubmit={handleSubmit} className="space-y-5">
+        {invitationToken ? <input type="hidden" name="token" value={invitationToken} /> : null}
+
         <AuthInputField
           id="signup-full-name"
           name="fullName"
@@ -130,12 +142,13 @@ export function SignupForm({ action, serverError }: Props) {
           label="Email address"
           placeholder="you@example.com"
           value={email}
+          readOnly={isInviteSignup}
           onChange={(event) => {
             setEmail(event.target.value);
             setFieldErrors((current) => ({ ...current, email: undefined }));
           }}
           error={fieldErrors.email ?? serverFieldErrors.email}
-          helperText="We will send your appointment confirmations here."
+          helperText={isInviteSignup ? "This email is locked to your employer invitation." : "We will send your appointment confirmations here."}
           leftIcon={<Mail className="h-4 w-4" />}
         />
 

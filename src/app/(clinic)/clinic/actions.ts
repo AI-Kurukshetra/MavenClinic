@@ -9,6 +9,23 @@ import { getSupabaseAdminClient } from "@/lib/supabase/admin";
 
 const suspendProviderSchema = z.object({
   providerId: z.string().uuid(),
+  suspendedReason: z.string().trim().min(5, "Add a short suspension reason."),
+  redirectTo: z.string().min(1).default("/clinic/providers"),
+});
+
+const reactivateProviderSchema = z.object({
+  providerId: z.string().uuid(),
+  redirectTo: z.string().min(1).default("/clinic/providers"),
+});
+
+const approveProviderSchema = z.object({
+  providerId: z.string().uuid(),
+  redirectTo: z.string().min(1).default("/clinic/providers"),
+});
+
+const rejectProviderSchema = z.object({
+  providerId: z.string().uuid(),
+  rejectionReason: z.string().trim().min(5, "Add a short rejection reason."),
   redirectTo: z.string().min(1).default("/clinic/providers"),
 });
 
@@ -68,9 +85,25 @@ function isSafeClinicPath(path: string) {
   return path.startsWith("/clinic");
 }
 
+async function syncProviderAuthState(admin: ReturnType<typeof getSupabaseAdminClient>, providerId: string, state: { suspended?: boolean; approvalStatus?: string }) {
+  const providerResult = await admin.from("providers").select("profile_id").eq("id", providerId).maybeSingle();
+  const profileId = providerResult.data?.profile_id;
+
+  if (!profileId) {
+    return;
+  }
+
+  const userResult = await admin.auth.admin.getUserById(profileId);
+  const currentMetadata = userResult.data.user?.user_metadata ?? {};
+  await admin.auth.admin.updateUserById(profileId, {
+    user_metadata: { ...currentMetadata, ...(typeof state.suspended === "boolean" ? { suspended: state.suspended } : {}), ...(state.approvalStatus ? { approvalStatus: state.approvalStatus } : {}) },
+  });
+}
+
 export async function suspendProviderAction(formData: FormData) {
   const payload = suspendProviderSchema.safeParse({
     providerId: String(formData.get("providerId") ?? ""),
+    suspendedReason: String(formData.get("suspendedReason") ?? ""),
     redirectTo: String(formData.get("redirectTo") ?? "/clinic/providers"),
   });
 
@@ -78,21 +111,63 @@ export async function suspendProviderAction(formData: FormData) {
     toClinicRedirect("/clinic/providers", { error: payload.error.issues[0]?.message ?? "Unable to suspend provider." });
   }
 
-  const { providerId, redirectTo } = payload.data;
+  const { providerId, redirectTo, suspendedReason } = payload.data;
   const path = isSafeClinicPath(redirectTo) ? redirectTo : "/clinic/providers";
   await requireClinicAdminAccess();
   const admin = getSupabaseAdminClient();
+  const suspendedAt = new Date().toISOString();
 
-  const { error } = await admin.from("providers").update({ accepting_patients: false }).eq("id", providerId);
+  const { error } = await admin.from("providers").update({
+    accepting_patients: false,
+    suspended: true,
+    suspended_at: suspendedAt,
+    suspended_reason: suspendedReason,
+  }).eq("id", providerId);
 
   if (error) {
     toClinicRedirect(path, { error: "Unable to suspend this provider right now." });
   }
 
+  await syncProviderAuthState(admin, providerId, { suspended: true });
+
   revalidatePath("/clinic/dashboard");
   revalidatePath("/clinic/providers");
   revalidatePath(`/clinic/providers/${providerId}`);
-  toClinicRedirect(path, { message: "Provider access updated." });
+  toClinicRedirect(path, { message: "Provider suspended." });
+}
+
+export async function reactivateProviderAction(formData: FormData) {
+  const payload = reactivateProviderSchema.safeParse({
+    providerId: String(formData.get("providerId") ?? ""),
+    redirectTo: String(formData.get("redirectTo") ?? "/clinic/providers"),
+  });
+
+  if (!payload.success) {
+    toClinicRedirect("/clinic/providers", { error: payload.error.issues[0]?.message ?? "Unable to reactivate provider." });
+  }
+
+  const { providerId, redirectTo } = payload.data;
+  const path = isSafeClinicPath(redirectTo) ? redirectTo : "/clinic/providers";
+  await requireClinicAdminAccess();
+  const admin = getSupabaseAdminClient();
+
+  const { error } = await admin.from("providers").update({
+    accepting_patients: true,
+    suspended: false,
+    suspended_at: null,
+    suspended_reason: null,
+  }).eq("id", providerId);
+
+  if (error) {
+    toClinicRedirect(path, { error: "Unable to reactivate this provider right now." });
+  }
+
+  await syncProviderAuthState(admin, providerId, { suspended: false });
+
+  revalidatePath("/clinic/dashboard");
+  revalidatePath("/clinic/providers");
+  revalidatePath(`/clinic/providers/${providerId}`);
+  toClinicRedirect(path, { message: "Provider reactivated." });
 }
 
 export async function createClinicInvitationAction(formData: FormData) {
@@ -308,4 +383,104 @@ export async function createCareTemplateAction(formData: FormData) {
 
   revalidatePath("/clinic/care-templates");
   toClinicRedirect(path, { message: "Care template saved." });
+}
+
+
+export async function approveProviderAction(formData: FormData) {
+  const payload = approveProviderSchema.safeParse({
+    providerId: String(formData.get("providerId") ?? ""),
+    redirectTo: String(formData.get("redirectTo") ?? "/clinic/providers"),
+  });
+
+  if (!payload.success) {
+    toClinicRedirect("/clinic/providers", { error: payload.error.issues[0]?.message ?? "Unable to approve provider." });
+  }
+
+  const { providerId, redirectTo } = payload.data;
+  const path = isSafeClinicPath(redirectTo) ? redirectTo : "/clinic/providers";
+  const { user } = await requireClinicAdminAccess();
+  const admin = getSupabaseAdminClient();
+
+  const providerResult = await admin.from("providers").select("profile_id").eq("id", providerId).maybeSingle();
+  const providerProfileId = providerResult.data?.profile_id;
+
+  const { error } = await admin.from("providers").update({
+    approval_status: "approved",
+    accepting_patients: true,
+    approved_at: new Date().toISOString(),
+    approved_by: user.id,
+    rejection_reason: null,
+  }).eq("id", providerId);
+
+  if (error) {
+    toClinicRedirect(path, { error: "Unable to approve this provider right now." });
+  }
+
+  await syncProviderAuthState(admin, providerId, { approvalStatus: "approved", suspended: false });
+
+  if (providerProfileId) {
+    await admin.from("notifications").insert({
+      recipient_id: providerProfileId,
+      actor_id: user.id,
+      type: "provider_application_approved",
+      title: "Application approved",
+      body: "Welcome to Maven Clinic! You can now start seeing patients.",
+      link: "/provider/dashboard",
+    });
+  }
+
+  revalidatePath("/clinic/providers");
+  revalidatePath("/clinic/dashboard");
+  revalidatePath("/register/provider/pending");
+  toClinicRedirect(path, { message: "Provider approved." });
+}
+
+export async function rejectProviderAction(formData: FormData) {
+  const payload = rejectProviderSchema.safeParse({
+    providerId: String(formData.get("providerId") ?? ""),
+    rejectionReason: String(formData.get("rejectionReason") ?? ""),
+    redirectTo: String(formData.get("redirectTo") ?? "/clinic/providers"),
+  });
+
+  if (!payload.success) {
+    toClinicRedirect("/clinic/providers", { error: payload.error.issues[0]?.message ?? "Unable to reject provider." });
+  }
+
+  const { providerId, redirectTo, rejectionReason } = payload.data;
+  const path = isSafeClinicPath(redirectTo) ? redirectTo : "/clinic/providers";
+  const { user } = await requireClinicAdminAccess();
+  const admin = getSupabaseAdminClient();
+
+  const providerResult = await admin.from("providers").select("profile_id").eq("id", providerId).maybeSingle();
+  const providerProfileId = providerResult.data?.profile_id;
+
+  const { error } = await admin.from("providers").update({
+    approval_status: "rejected",
+    accepting_patients: false,
+    approved_at: null,
+    approved_by: null,
+    rejection_reason: rejectionReason,
+  }).eq("id", providerId);
+
+  if (error) {
+    toClinicRedirect(path, { error: "Unable to reject this provider right now." });
+  }
+
+  await syncProviderAuthState(admin, providerId, { approvalStatus: "rejected", suspended: false });
+
+  if (providerProfileId) {
+    await admin.from("notifications").insert({
+      recipient_id: providerProfileId,
+      actor_id: user.id,
+      type: "provider_application_rejected",
+      title: "Application update",
+      body: "Please contact support for more information.",
+      link: "/login",
+    });
+  }
+
+  revalidatePath("/clinic/providers");
+  revalidatePath("/clinic/dashboard");
+  revalidatePath("/register/provider/pending");
+  toClinicRedirect(path, { message: "Provider application updated." });
 }

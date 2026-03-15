@@ -477,6 +477,9 @@ async function seedProfiles(users: AuthUserResult[], employerId: string) {
 async function seedProviderRows(users: AuthUserResult[]) {
   const providerIdByEmail = new Map<string, string>();
 
+  // Run in Supabase if providers are stuck in pending:
+  // UPDATE public.providers SET approval_status='approved', accepting_patients=true WHERE approval_status='pending';
+
   for (const provider of providers) {
     const user = users.find((entry) => entry.email === provider.email);
     if (!user) {
@@ -518,6 +521,22 @@ async function seedProviderRows(users: AuthUserResult[]) {
       }
       providerIdByEmail.set(provider.email, data.id);
       console.log(`  + Created provider: ${provider.fullName}`);
+    }
+  }
+
+  const approvedAt = new Date().toISOString();
+  for (const providerId of providerIdByEmail.values()) {
+    const { error } = await supabase
+      .from("providers")
+      .update({
+        approval_status: "approved",
+        accepting_patients: true,
+        approved_at: approvedAt,
+      })
+      .eq("id", providerId);
+
+    if (error) {
+      throw new Error(`Failed approving seeded provider ${providerId}: ${error.message}`);
     }
   }
 

@@ -1,14 +1,16 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
 import { publicEnv, serverEnv } from "@/lib/env";
+import { getFeatureFlagEnabled } from "@/lib/feature-flags";
 import {
   buildCarePlanPrompt,
   buildCyclePredictionPrompt,
   buildRiskFlagPrompt,
   buildSymptomInsightPrompt,
+  buildWellnessScorePrompt,
 } from "@/lib/ai/prompts";
 
-type InsightType = "symptom_insight" | "risk_flag" | "cycle_prediction" | "care_plan_suggestion";
+type InsightType = "symptom_insight" | "risk_flag" | "cycle_prediction" | "care_plan_suggestion" | "wellness_score";
 
 type SymptomInsightLog = {
   loggedAt?: string;
@@ -24,6 +26,12 @@ type RiskFlagResult = {
   flag: boolean;
   reason?: string;
   urgency?: "routine" | "urgent";
+};
+
+type WellnessTip = {
+  title: string;
+  description: string;
+  icon: "sparkles" | "moon" | "heart" | "leaf" | "message-circle";
 };
 
 const MOCK_INSIGHTS = {
@@ -58,6 +66,13 @@ const MOCK_INSIGHTS = {
       { title: "Provider follow-up", description: "Bring persistent or worsening symptoms to your provider with your log history.", targetDate: "2026-04-04", category: "care" },
     ],
   ],
+  wellness_score: [
+    [
+      { title: "Protect your sleep window", description: "Aim for the same bedtime this week so your recovery pattern stays steadier.", icon: "moon" },
+      { title: "Keep meals consistent", description: "Regular meals can help smooth both mood and energy swings across the day.", icon: "leaf" },
+      { title: "Reach out early", description: "If symptoms keep stacking up, message your provider before they start affecting your routine.", icon: "message-circle" },
+    ],
+  ],
 } as const;
 
 const promptBuilders: Record<InsightType, (data: unknown) => string> = {
@@ -65,10 +80,15 @@ const promptBuilders: Record<InsightType, (data: unknown) => string> = {
   risk_flag: buildRiskFlagPrompt,
   cycle_prediction: buildCyclePredictionPrompt,
   care_plan_suggestion: buildCarePlanPrompt,
+  wellness_score: buildWellnessScorePrompt,
 };
 
-function isAiInsightsEnabled() {
-  return publicEnv.NEXT_PUBLIC_AI_INSIGHTS_ENABLED === "true";
+async function isAiEnabled() {
+  if (!serverEnv.ANTHROPIC_API_KEY || publicEnv.NEXT_PUBLIC_AI_INSIGHTS_ENABLED !== "true") {
+    return false;
+  }
+
+  return getFeatureFlagEnabled("ai_insights", true);
 }
 
 function parseClaudeResponse(type: InsightType, value: string) {
@@ -83,7 +103,15 @@ function parseClaudeResponse(type: InsightType, value: string) {
       return MOCK_INSIGHTS.risk_flag[0];
     }
 
-    return type === "cycle_prediction" ? MOCK_INSIGHTS.cycle_prediction[0] : MOCK_INSIGHTS.care_plan_suggestion[0];
+    if (type === "cycle_prediction") {
+      return MOCK_INSIGHTS.cycle_prediction[0];
+    }
+
+    if (type === "wellness_score") {
+      return MOCK_INSIGHTS.wellness_score[0];
+    }
+
+    return MOCK_INSIGHTS.care_plan_suggestion[0];
   }
 }
 
@@ -182,11 +210,19 @@ function buildMockInsight(type: InsightType, data: unknown) {
     return pickMockRiskFlag(data);
   }
 
-  return type === "cycle_prediction" ? MOCK_INSIGHTS.cycle_prediction[0] : MOCK_INSIGHTS.care_plan_suggestion[0];
+  if (type === "cycle_prediction") {
+    return MOCK_INSIGHTS.cycle_prediction[0];
+  }
+
+  if (type === "wellness_score") {
+    return [...MOCK_INSIGHTS.wellness_score[0]] as WellnessTip[];
+  }
+
+  return MOCK_INSIGHTS.care_plan_suggestion[0];
 }
 
 export async function generateAiInsight(type: InsightType, data: unknown) {
-  if (!serverEnv.ANTHROPIC_API_KEY || !isAiInsightsEnabled()) {
+  if (!(await isAiEnabled())) {
     return buildMockInsight(type, data);
   }
 
@@ -208,10 +244,9 @@ export async function generateAiInsight(type: InsightType, data: unknown) {
 }
 
 export const aiRequestSchema = z.object({
-  type: z.enum(["symptom_insight", "risk_flag", "cycle_prediction", "care_plan_suggestion"]),
+  type: z.enum(["symptom_insight", "risk_flag", "cycle_prediction", "care_plan_suggestion", "wellness_score"]),
   data: z.unknown(),
   logId: z.uuid().optional(),
 });
 
 export type AiRequestInput = z.infer<typeof aiRequestSchema>;
-

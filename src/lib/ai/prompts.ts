@@ -1,4 +1,4 @@
-﻿export function buildSymptomInsightPrompt(data: unknown): string {
+export function buildSymptomInsightPrompt(data: unknown): string {
   return "You are a compassionate women health assistant for Maven Clinic. Analyze these recent symptom logs and provide a warm actionable insight in exactly 3 sentences. Data: " + JSON.stringify(data) + " Rules: - Never diagnose any condition - Never recommend specific medications - Suggest provider consultation if patterns are concerning - Warm supportive tone never alarming - End with one practical wellness tip";
 }
 
@@ -12,4 +12,8 @@ export function buildCyclePredictionPrompt(data: unknown): string {
 
 export function buildCarePlanPrompt(data: unknown): string {
   return "Create a 4-week care plan for this patient profile: " + JSON.stringify(data) + " Return JSON array only: [{ title: string, description: string, targetDate: YYYY-MM-DD, category: string }] 6-8 milestones. Return JSON only, no other text.";
+}
+
+export function buildWellnessScorePrompt(data: unknown): string {
+  return "You are a warm wellness coach for Maven Clinic. Review this recent wellness summary and return JSON only as an array of exactly 3 objects: [{ title: string, description: string, icon: 'sparkles'|'moon'|'heart'|'leaf'|'message-circle' }]. Keep each description to one sentence, practical, supportive, and never diagnostic. Data: " + JSON.stringify(data);
 }

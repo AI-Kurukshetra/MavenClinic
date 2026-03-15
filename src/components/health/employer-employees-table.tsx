@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { ShieldCheck, UserPlus, X } from "lucide-react";
+import { Copy, Check, ShieldCheck, UserPlus, X } from "lucide-react";
 import { useFormStatus } from "react-dom";
 import { inviteEmployeeAction } from "@/app/(employer)/employer/actions";
 import { Button } from "@/components/ui/button";
@@ -26,6 +26,7 @@ type Props = {
   message?: string;
   error?: string;
   warning?: string;
+  inviteLink?: string;
 };
 
 function SubmitButton() {
@@ -33,13 +34,24 @@ function SubmitButton() {
 
   return (
     <Button type="submit" className="h-11 rounded-xl px-5" disabled={pending}>
-      {pending ? "Sending invite..." : "Send invite"}
+      {pending ? "Creating invite..." : "Send invite"}
     </Button>
   );
 }
 
-export function EmployerEmployeesTable({ employerName, employees, page, totalPages, totalEmployees, message, error, warning }: Props) {
+export function EmployerEmployeesTable({ employerName, employees, page, totalPages, totalEmployees, message, error, warning, inviteLink }: Props) {
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  async function handleCopyLink() {
+    if (!inviteLink) {
+      return;
+    }
+
+    await navigator.clipboard.writeText(inviteLink);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 2000);
+  }
 
   return (
     <div className="space-y-6">
@@ -56,10 +68,29 @@ export function EmployerEmployeesTable({ employerName, employees, page, totalPag
       </div>
 
       {message ? <Card className="border-[rgba(46,168,152,0.18)] bg-[rgba(46,168,152,0.08)] p-4 text-sm text-[var(--foreground)]">{message}</Card> : null}
+      {inviteLink ? (
+        <Card className="space-y-3 border-[rgba(61,191,173,0.2)] bg-[rgba(61,191,173,0.08)] p-5">
+          <div>
+            <p className="text-sm uppercase tracking-[0.18em] text-[var(--teal-700)]">Share this link with your employee</p>
+            <p className="mt-2 text-sm leading-6 text-[var(--foreground-muted)]">They will land on the correct signup flow and be linked to your employer workspace automatically.</p>
+          </div>
+          <div className="rounded-[20px] border border-[var(--border)] bg-white px-4 py-3 text-sm text-[var(--foreground)] break-all">{inviteLink}</div>
+          <div className="flex justify-end">
+            <button
+              type="button"
+              onClick={() => void handleCopyLink()}
+              className="inline-flex h-10 items-center justify-center gap-2 rounded-full border border-[var(--border)] bg-white px-4 text-sm font-medium text-[var(--foreground)] transition hover:bg-[var(--slate-50)]"
+            >
+              {copied ? <Check className="h-4 w-4 text-[var(--teal-700)]" /> : <Copy className="h-4 w-4" />}
+              {copied ? "Copied" : "Copy link"}
+            </button>
+          </div>
+        </Card>
+      ) : null}
       {warning ? <Card className="border-[rgba(232,125,155,0.18)] bg-[rgba(232,125,155,0.08)] p-4 text-sm text-[var(--foreground)]">{warning}</Card> : null}
       {error ? <Card className="border-[rgba(190,68,100,0.22)] bg-[rgba(190,68,100,0.08)] p-4 text-sm text-[var(--foreground)]">{error}</Card> : null}
 
-      <Card className="p-0 overflow-hidden">
+      <Card className="overflow-hidden p-0">
         {employees.length ? (
           <div className="overflow-x-auto">
             <table className="min-w-full divide-y divide-[var(--border)] text-left">
@@ -96,7 +127,7 @@ export function EmployerEmployeesTable({ employerName, employees, page, totalPag
             </div>
             <h3 className="mt-4 text-2xl font-semibold tracking-tight">No employees yet — invite your team</h3>
             <p className="mt-2 max-w-xl text-sm leading-7 text-[var(--foreground-muted)]">
-              Once employees are linked to this employer account, they will appear here with enrollment dates and recent activity.
+              Once employees sign up through your invitation link, they will appear here with enrollment dates and recent activity.
             </p>
             <Button type="button" className="mt-6 h-11 gap-2 rounded-xl px-5" onClick={() => setIsModalOpen(true)}>
               <UserPlus className="h-4 w-4" />
@@ -142,7 +173,7 @@ export function EmployerEmployeesTable({ employerName, employees, page, totalPag
               </button>
             </div>
             <p className="mt-3 text-sm leading-6 text-[var(--foreground-muted)]">
-              Send a patient invite and attach employer metadata so the employee can join the right benefits cohort.
+              Create a shareable signup link so the employee joins the right employer workspace.
             </p>
             <form action={inviteEmployeeAction} className="mt-6 space-y-4">
               <input type="hidden" name="page" value={page} />
@@ -169,4 +200,3 @@ export function EmployerEmployeesTable({ employerName, employees, page, totalPag
     </div>
   );
 }
-

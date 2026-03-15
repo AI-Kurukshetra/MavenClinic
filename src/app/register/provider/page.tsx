@@ -3,6 +3,7 @@ import { registerProviderAction } from "@/app/(auth)/actions";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { getAuthenticatedRedirectPath, getCurrentProfileWithSync, getCurrentUser } from "@/lib/auth";
+import { getSupabaseAdminClient } from "@/lib/supabase/admin";
 import {
   getInvitationError as getProviderInvitationError,
   getProviderInvitationByToken,
@@ -11,6 +12,41 @@ import {
   providerSpecialties,
 } from "@/lib/provider-invitations";
 
+type ProviderRegistrationState = "pending" | "approved" | "rejected";
+
+async function getProviderApprovalState(userId: string): Promise<ProviderRegistrationState | null> {
+  const admin = getSupabaseAdminClient();
+  const primaryResult = await admin
+    .from("providers")
+    .select("approval_status")
+    .eq("profile_id", userId)
+    .maybeSingle();
+
+  if (!primaryResult.error) {
+    const row = primaryResult.data as { approval_status?: string | null } | null;
+    if (!row?.approval_status) {
+      return row ? "approved" : null;
+    }
+
+    return row.approval_status === "pending" || row.approval_status === "rejected" ? row.approval_status : "approved";
+  }
+
+  if (!primaryResult.error.message.includes("approval_status")) {
+    throw new Error(primaryResult.error.message);
+  }
+
+  const fallbackResult = await admin
+    .from("providers")
+    .select("id")
+    .eq("profile_id", userId)
+    .maybeSingle();
+
+  if (fallbackResult.error) {
+    throw new Error(fallbackResult.error.message);
+  }
+
+  return fallbackResult.data ? "approved" : null;
+}
 
 export default async function ProviderRegistrationPage({
   searchParams,
@@ -22,6 +58,19 @@ export default async function ProviderRegistrationPage({
 
   if (currentUser) {
     const profile = await getCurrentProfileWithSync(currentUser);
+
+    if (profile?.role === "provider") {
+      const approvalStatus = await getProviderApprovalState(currentUser.id);
+
+      if (approvalStatus === "pending") {
+        redirect("/register/provider/pending");
+      }
+
+      if (approvalStatus === "rejected") {
+        redirect("/login?error=application_rejected");
+      }
+    }
+
     redirect(getAuthenticatedRedirectPath(profile));
   }
 

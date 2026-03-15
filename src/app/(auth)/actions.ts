@@ -6,6 +6,8 @@ import { redirect } from "next/navigation";
 import { ensureProfileForUser, getAuthenticatedRedirectPath, getCurrentProfileWithSync } from "@/lib/auth";
 import { publicEnv } from "@/lib/env";
 import { loginSchema, signupSchema } from "@/lib/auth-form-schemas";
+import { getValidPartnerInvitation, normalizePartnerInvitationToken } from "@/lib/partner-invitations";
+import { getValidPatientInvitation, normalizePatientInvitationToken } from "@/lib/patient-invitations";
 import {
   getValidProviderInvitation,
   isProviderSpecialty,
@@ -70,6 +72,7 @@ export async function loginAction(formData: FormData) {
 }
 
 export async function signupAction(formData: FormData) {
+  const token = normalizePatientInvitationToken(String(formData.get("token") ?? ""));
   const payload = signupSchema.safeParse({
     fullName: String(formData.get("fullName") ?? "").trim(),
     email: String(formData.get("email") ?? "").trim(),
@@ -77,32 +80,57 @@ export async function signupAction(formData: FormData) {
   });
 
   if (!payload.success) {
-    toRedirect("/signup", { error: payload.error.issues[0]?.message ?? "Complete all required fields." });
+    toRedirect("/signup", { ...(token ? { token } : {}), error: payload.error.issues[0]?.message ?? "Complete all required fields." });
+  }
+
+  const invitationResult = token ? await getValidPatientInvitation(token) : { invitation: null, error: null as string | null };
+
+  if (token && !invitationResult.invitation) {
+    toRedirect("/signup", { token, error: invitationResult.error ?? "This employee invite is invalid." });
   }
 
   const { fullName, email, password } = payload.data;
+  const invitedEmployerId = invitationResult.invitation?.metadata?.employer_id ?? invitationResult.invitation?.employer_id ?? null;
+  const finalEmail = invitationResult.invitation?.email ?? email;
+
+  if (invitationResult.invitation && finalEmail.toLowerCase() !== email.toLowerCase()) {
+    toRedirect("/signup", { token, error: "Use the email address attached to your employee invitation." });
+  }
+
   const supabase = await getSupabaseServerClient();
 
   const { data, error } = await supabase.auth.signUp({
-    email,
+    email: finalEmail,
     password,
     options: {
       emailRedirectTo: `${publicEnv.NEXT_PUBLIC_APP_URL}/dashboard`,
       data: {
         full_name: fullName,
+        ...(invitedEmployerId ? { employerId: invitedEmployerId } : {}),
       },
     },
   });
 
   if (error) {
-    toRedirect("/signup", { error: error.message });
+    toRedirect("/signup", { ...(token ? { token } : {}), error: error.message });
   }
 
   if (data.user) {
     await ensureProfileForUser(data.user);
+
+    if (invitedEmployerId) {
+      const admin = getSupabaseAdminClient();
+      await admin.from("profiles").update({ employer_id: invitedEmployerId }).eq("id", data.user.id);
+    }
+
+    if (invitationResult.invitation?.id) {
+      const admin = getSupabaseAdminClient();
+      await admin.from("invitations").update({ accepted: true }).eq("id", invitationResult.invitation.id);
+    }
   }
 
   revalidatePath("/dashboard");
+  revalidatePath("/employer/employees");
   redirect((data.session ? "/onboarding" : "/login?message=Check your email to confirm your account before signing in.") as Route);
 }
 
@@ -183,7 +211,8 @@ export async function registerProviderAction(formData: FormData) {
       bio,
       license_number: licenseNumber,
       languages,
-      accepting_patients: true,
+      accepting_patients: false,
+      approval_status: "pending",
       consultation_fee_cents: consultationFeeCents,
     });
 
@@ -217,8 +246,8 @@ export async function registerProviderAction(formData: FormData) {
   }
 
   revalidatePath("/");
-  revalidatePath("/provider/dashboard");
-  redirect("/provider/dashboard");
+  revalidatePath("/register/provider/pending");
+  redirect("/register/provider/pending");
 }
 
 export async function registerEmployerAction(formData: FormData) {
@@ -323,9 +352,112 @@ export async function registerEmployerAction(formData: FormData) {
   redirect("/employer/dashboard");
 }
 
+
+export async function registerPartnerAction(formData: FormData) {
+  const token = normalizePartnerInvitationToken(String(formData.get("token") ?? ""));
+  const fullName = String(formData.get("fullName") ?? "").trim();
+  const password = String(formData.get("password") ?? "");
+
+  if (!token) {
+    toRedirect("/register/partner" as Route, { error: "Missing invite token." });
+  }
+
+  const { invitation, error: invitationError } = await getValidPartnerInvitation(token);
+
+  if (!invitation) {
+    toRedirect("/register/partner" as Route, { token, error: invitationError ?? "This partner invite is invalid." });
+  }
+
+  if (!fullName || !password) {
+    toRedirect("/register/partner" as Route, { token, error: "Complete all required fields before creating the partner account." });
+  }
+
+  const accessLevel = invitation.metadata?.access_level;
+  const patientId = invitation.metadata?.patient_id;
+
+  if (!patientId || !accessLevel) {
+    toRedirect("/register/partner" as Route, { token, error: "This invite is missing the required access details." });
+  }
+
+  const admin = getSupabaseAdminClient();
+  const supabase = await getSupabaseServerClient();
+
+  const { data: createdAuth, error: createAuthError } = await admin.auth.admin.createUser({
+    email: invitation.email,
+    password,
+    email_confirm: true,
+    user_metadata: {
+      full_name: fullName,
+      role: "partner",
+      onboardingComplete: true,
+    },
+  });
+
+  if (createAuthError || !createdAuth.user) {
+    toRedirect("/register/partner" as Route, { token, error: createAuthError?.message ?? "Unable to create the partner account." });
+  }
+
+  const user = createdAuth.user;
+
+  try {
+    const { error: profileError } = await admin.from("profiles").upsert({
+      id: user.id,
+      full_name: fullName,
+      onboarding_complete: true,
+      role: "partner",
+    });
+
+    if (profileError) {
+      throw new Error(profileError.message);
+    }
+
+    const { error: accessError } = await admin.from("partner_access").insert({
+      patient_id: patientId,
+      partner_id: user.id,
+      access_level: accessLevel,
+    });
+
+    if (accessError) {
+      throw new Error(accessError.message);
+    }
+
+    const { error: invitationUpdateError } = await admin
+      .from("invitations")
+      .update({ accepted: true })
+      .eq("id", invitation.id);
+
+    if (invitationUpdateError) {
+      throw new Error(invitationUpdateError.message);
+    }
+  } catch (error) {
+    await admin.auth.admin.deleteUser(user.id);
+    const message = error instanceof Error ? error.message : "Unable to finish partner registration.";
+    toRedirect("/register/partner" as Route, { token, error: message });
+  }
+
+  const { error: signInError } = await supabase.auth.signInWithPassword({
+    email: invitation.email,
+    password,
+  });
+
+  if (signInError) {
+    toRedirect("/login", { message: "Partner account created. Sign in to continue." });
+  }
+
+  revalidatePath("/");
+  revalidatePath("/partner/dashboard");
+  redirect("/partner/dashboard");
+}
 export async function logoutAction() {
   const supabase = await getSupabaseServerClient();
   await supabase.auth.signOut();
   redirect("/login?message=You have been signed out." as Route);
 }
+
+
+
+
+
+
+
 

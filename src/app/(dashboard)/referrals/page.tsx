@@ -1,16 +1,13 @@
-import { ComingSoonState } from "@/components/health/coming-soon-state";
 import { DashboardShell } from "@/components/health/dashboard-shell";
+import { PatientReferralsPage } from "@/features/referrals/patient-referrals-page";
+import { getPatientReferralsPageData } from "@/lib/referrals";
 
-export default function Page() {
+export default async function ReferralsPage() {
+  const data = await getPatientReferralsPageData();
+
   return (
-    <DashboardShell title="Referrals" eyebrow="Care network">
-      <ComingSoonState
-        badge="Coming soon"
-        title="Referral management"
-        description="Specialist referrals, external care handoffs, and referral status tracking will appear here once that workflow is implemented."
-        dashboardHref="/dashboard"
-        dashboardLabel="Back to patient dashboard"
-      />
+    <DashboardShell title="Referrals" eyebrow="Care network" section="patient">
+      <PatientReferralsPage {...data} />
     </DashboardShell>
   );
 }

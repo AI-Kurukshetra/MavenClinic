@@ -15,14 +15,24 @@ export default async function PartnerSettingsPage() {
       <div className="space-y-6">
         <Card>
           <p className="text-sm uppercase tracking-[0.22em] text-[var(--rose-700)]">Access details</p>
-          <h2 className="mt-2 text-2xl font-semibold tracking-tight">Current access: {data.context.accessLabel}</h2>
-          <p className="mt-3 text-sm leading-7 text-[var(--foreground-muted)]">Access granted by {data.context.patientName}{data.context.grantedAt ? ` on ${formatDate(data.context.grantedAt)}` : ""}.</p>
+          <h2 className="mt-2 text-2xl font-semibold tracking-tight">
+            {data.context.hasActiveAccess ? `Current access: ${data.context.accessLabel}` : "No shared access yet"}
+          </h2>
+          <p className="mt-3 text-sm leading-7 text-[var(--foreground-muted)]">
+            {data.context.hasActiveAccess
+              ? `Access granted by ${data.context.patientName}${data.context.grantedAt ? ` on ${formatDate(data.context.grantedAt)}` : ""}.`
+              : "Your account is active, but no partner access has been shared with you yet."}
+          </p>
           <div className="mt-5 flex flex-wrap gap-2">
             {data.accessChips.map((chip) => (
               <PartnerAccessChip key={chip.key} label={chip.label} granted={chip.granted} />
             ))}
           </div>
-          <p className="mt-4 text-sm leading-7 text-[var(--foreground-muted)]">You cannot change your own access here. Ask {data.context.patientFirstName} to update your access if something needs to change.</p>
+          <p className="mt-4 text-sm leading-7 text-[var(--foreground-muted)]">
+            {data.context.hasActiveAccess
+              ? `You cannot change your own access here. Ask ${data.context.patientFirstName} to update your access if something needs to change.`
+              : "When your partner shares access, the details will appear here in a read-only summary."}
+          </p>
         </Card>
 
         <div className="grid gap-6 lg:grid-cols-2">
@@ -32,7 +42,7 @@ export default async function PartnerSettingsPage() {
               {data.accessChips.map((chip) => (
                 <div key={chip.key} className="flex items-center justify-between rounded-2xl border border-[var(--border)] px-4 py-3">
                   <span>{chip.label}</span>
-                  <span className={chip.granted ? 'text-[var(--teal-700)]' : 'text-slate-400'}>{chip.granted ? 'Accessible' : 'Not shared'}</span>
+                  <span className={chip.granted ? "text-[var(--teal-700)]" : "text-slate-400"}>{chip.granted ? "Accessible" : "Not shared"}</span>
                 </div>
               ))}
             </div>
@@ -44,7 +54,7 @@ export default async function PartnerSettingsPage() {
               <form action={logoutAction}>
                 <Button type="submit" variant="secondary" className="rounded-xl">Sign out</Button>
               </form>
-              <PartnerRemoveAccessButton patientName={data.context.patientName} />
+              {data.context.hasActiveAccess ? <PartnerRemoveAccessButton patientName={data.context.patientName} /> : null}
             </div>
           </Card>
         </div>

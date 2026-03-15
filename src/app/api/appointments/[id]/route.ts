@@ -25,13 +25,29 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
     }
 
     const { id } = await context.params;
-    const { user, supabase } = authResult.context;
-    const { data: appointment, error: appointmentError } = await supabase
+    const { user, supabase, profile } = authResult.context;
+    const isProvider = profile?.role === "provider";
+    const providerRecord = isProvider
+      ? await supabase.from("providers").select("id").eq("profile_id", user.id).maybeSingle()
+      : null;
+
+    if (providerRecord?.error) {
+      return apiError(500, "provider_lookup_failed", "Unable to verify this provider.");
+    }
+
+    const providerId = providerRecord?.data?.id ?? null;
+    if (isProvider && !providerId) {
+      return apiError(403, "provider_not_found", "Provider access is unavailable.");
+    }
+
+    let appointmentQuery = supabase
       .from("appointments")
       .select("id, patient_id, provider_id, scheduled_at, status, notes")
-      .eq("id", id)
-      .eq("patient_id", user.id)
-      .maybeSingle();
+      .eq("id", id);
+
+    appointmentQuery = isProvider ? appointmentQuery.eq("provider_id", providerId) : appointmentQuery.eq("patient_id", user.id);
+
+    const { data: appointment, error: appointmentError } = await appointmentQuery.maybeSingle();
 
     if (appointmentError) {
       return apiError(500, "appointment_lookup_failed", "Unable to load this appointment.");
@@ -39,24 +55,6 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
 
     if (!appointment) {
       return apiError(404, "appointment_not_found", "Appointment not found.");
-    }
-
-    if (payload.data.action === "save_notes") {
-      const nextNotes = sanitizeNullableText(payload.data.notes);
-      const { error: notesError } = await supabase
-        .from("appointments")
-        .update({
-          notes: nextNotes,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", appointment.id)
-        .eq("patient_id", user.id);
-
-      if (notesError) {
-        return apiError(500, "appointment_notes_failed", "Unable to save appointment notes.");
-      }
-
-      return apiSuccess({ ok: true, notes: nextNotes ?? "" });
     }
 
     const { data: provider, error: providerError } = await supabase
@@ -73,7 +71,31 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
       return apiError(400, "provider_profile_missing", "Provider profile not found.");
     }
 
+    if (payload.data.action === "save_notes") {
+      const nextNotes = sanitizeNullableText(payload.data.notes);
+      let notesQuery = supabase
+        .from("appointments")
+        .update({
+          notes: nextNotes,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", appointment.id);
+
+      notesQuery = isProvider ? notesQuery.eq("provider_id", providerId) : notesQuery.eq("patient_id", user.id);
+      const { error: notesError } = await notesQuery;
+
+      if (notesError) {
+        return apiError(500, "appointment_notes_failed", "Unable to save appointment notes.");
+      }
+
+      return apiSuccess({ ok: true, notes: nextNotes ?? "" });
+    }
+
     if (payload.data.action === "reschedule") {
+      if (isProvider) {
+        return apiError(403, "forbidden", "Use the provider scheduling workspace to reschedule visits.");
+      }
+
       if (appointment.status !== "scheduled") {
         return apiError(400, "appointment_not_reschedulable", "Only scheduled appointments can be rescheduled.");
       }
@@ -118,6 +140,10 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
     }
 
     if (payload.data.action === "cancel") {
+      if (isProvider) {
+        return apiError(403, "forbidden", "Use the provider scheduling workspace to cancel visits.");
+      }
+
       const { error: cancelError } = await supabase
         .from("appointments")
         .update({
@@ -162,11 +188,12 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
         return apiError(400, "consultation_not_open", "This consultation is not open yet.");
       }
 
-      const { error: startError } = await supabase
+      let startQuery = supabase
         .from("appointments")
         .update({ status: "in_progress", started_at: now.toISOString(), updated_at: now.toISOString() })
-        .eq("id", appointment.id)
-        .eq("patient_id", user.id);
+        .eq("id", appointment.id);
+      startQuery = isProvider ? startQuery.eq("provider_id", providerId) : startQuery.eq("patient_id", user.id);
+      const { error: startError } = await startQuery;
 
       if (startError) {
         return apiError(500, "consultation_start_failed", "Unable to start this consultation.");
@@ -175,43 +202,58 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
       return apiSuccess({ ok: true });
     }
 
-    const { error: completeError } = await supabase
+    let completeQuery = supabase
       .from("appointments")
       .update({ status: "completed", completed_at: new Date().toISOString(), updated_at: new Date().toISOString() })
-      .eq("id", appointment.id)
-      .eq("patient_id", user.id);
+      .eq("id", appointment.id);
+    completeQuery = isProvider ? completeQuery.eq("provider_id", providerId) : completeQuery.eq("patient_id", user.id);
+    const { error: completeError } = await completeQuery;
 
     if (completeError) {
       return apiError(500, "consultation_complete_failed", "Unable to complete this consultation.");
     }
 
     const admin = getSupabaseAdminClient();
-    const { error: notificationError } = await admin.from("notifications").insert([
-      {
-        recipient_id: user.id,
-        actor_id: user.id,
-        appointment_id: appointment.id,
-        type: "consultation_complete",
-        title: "Consultation complete",
-        body: sanitizeNullableText("Your visit has been marked complete. Your dashboard has the latest status."),
-        link: "/dashboard",
-      },
-      {
-        recipient_id: provider.profile_id,
-        actor_id: user.id,
-        appointment_id: appointment.id,
-        type: "consultation_complete",
-        title: "Consultation finished",
-        body: sanitizeNullableText("The patient ended the consultation and the appointment is now complete."),
-        link: "/provider/dashboard",
-      },
-    ]);
+    const notifications = isProvider
+      ? [
+          {
+            recipient_id: appointment.patient_id,
+            actor_id: user.id,
+            appointment_id: appointment.id,
+            type: "consultation_complete",
+            title: "Consultation complete",
+            body: sanitizeNullableText("Your provider marked this visit complete. Check your care dashboard for follow-up steps."),
+            link: "/appointments",
+          },
+        ]
+      : [
+          {
+            recipient_id: user.id,
+            actor_id: user.id,
+            appointment_id: appointment.id,
+            type: "consultation_complete",
+            title: "Consultation complete",
+            body: sanitizeNullableText("Your visit has been marked complete. Your dashboard has the latest status."),
+            link: "/dashboard",
+          },
+          {
+            recipient_id: provider.profile_id,
+            actor_id: user.id,
+            appointment_id: appointment.id,
+            type: "consultation_complete",
+            title: "Consultation finished",
+            body: sanitizeNullableText("The patient ended the consultation and the appointment is now complete."),
+            link: "/provider/dashboard",
+          },
+        ];
+
+    const { error: notificationError } = await admin.from("notifications").insert(notifications);
 
     if (notificationError) {
       return apiError(500, "notification_create_failed", "Consultation completed, but follow-up notifications could not be created.");
     }
 
-    return apiSuccess({ ok: true, redirectTo: "/dashboard?toast=consultation-complete" });
+    return apiSuccess({ ok: true, redirectTo: isProvider ? "/provider/appointments" : "/dashboard?toast=consultation-complete" });
   } catch {
     return apiError(500, "appointment_update_failed", "Unable to update this appointment right now.");
   }
