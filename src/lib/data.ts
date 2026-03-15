@@ -439,11 +439,7 @@ async function getDashboardMessageThreads(userId: string): Promise<MessageThread
     .eq("patient_id", userId)
     .order("created_at", { ascending: false });
 
-  if (conversationsError) {
-    throw new Error(conversationsError.message);
-  }
-
-  if (!conversations?.length) {
+  if (conversationsError || !conversations?.length) {
     return [];
   }
 
@@ -470,16 +466,8 @@ async function getDashboardMessageThreads(userId: string): Promise<MessageThread
       .order("created_at", { ascending: false }),
   ]);
 
-  if (providerProfilesResult.error) {
-    throw new Error(providerProfilesResult.error.message);
-  }
-
-  if (providerRowsResult.error) {
-    throw new Error(providerRowsResult.error.message);
-  }
-
-  if (messageRowsResult.error) {
-    throw new Error(messageRowsResult.error.message);
+  if (providerProfilesResult.error || providerRowsResult.error || messageRowsResult.error) {
+    return [];
   }
 
   const profileMap = new Map((providerProfilesResult.data ?? []).map((profile) => [profile.id, profile]));
@@ -596,53 +584,42 @@ export async function getPatientDashboardData() {
       .order("created_at", { ascending: false })
       .limit(1)
       .maybeSingle(),
-    getDashboardMessageThreads(user.id),
+    getDashboardMessageThreads(user.id).catch(() => []),
   ]);
 
-  if (nextAppointmentResult.error) {
-    throw new Error(nextAppointmentResult.error.message);
-  }
+  const safeNextAppointmentRow = nextAppointmentResult.error ? null : nextAppointmentResult.data;
+  const safeLatestCycleRow = latestCycleResult.error ? null : latestCycleResult.data;
+  const safeSymptomLogRows = symptomLogsResult.error ? [] : symptomLogsResult.data ?? [];
+  const safeCarePlanRow = carePlanResult.error ? null : carePlanResult.data;
 
-  if (latestCycleResult.error) {
-    throw new Error(latestCycleResult.error.message);
-  }
-
-  if (symptomLogsResult.error) {
-    throw new Error(symptomLogsResult.error.message);
-  }
-
-  if (carePlanResult.error) {
-    throw new Error(carePlanResult.error.message);
-  }
-
-  const appointmentProviderIds = nextAppointmentResult.data?.provider_id ? [nextAppointmentResult.data.provider_id] : [];
+  const appointmentProviderIds = safeNextAppointmentRow?.provider_id ? [safeNextAppointmentRow.provider_id] : [];
   const providerMap = appointmentProviderIds.length ? await getProviderMap(appointmentProviderIds) : new Map<string, Provider>();
-  const nextAppointment = nextAppointmentResult.data
+  const nextAppointment = safeNextAppointmentRow
     ? (() => {
-        const provider = providerMap.get(nextAppointmentResult.data.provider_id);
+        const provider = providerMap.get(safeNextAppointmentRow.provider_id);
 
         if (!provider) {
           return null;
         }
 
         return {
-          id: nextAppointmentResult.data.id,
-          patientId: nextAppointmentResult.data.patient_id,
-          providerId: nextAppointmentResult.data.provider_id,
+          id: safeNextAppointmentRow.id,
+          patientId: safeNextAppointmentRow.patient_id,
+          providerId: safeNextAppointmentRow.provider_id,
           providerName: provider.fullName,
           providerSpecialty: provider.specialtyLabel,
-          scheduledAt: nextAppointmentResult.data.scheduled_at,
-          durationMinutes: nextAppointmentResult.data.duration_minutes ?? 30,
-          type: nextAppointmentResult.data.type,
-          status: nextAppointmentResult.data.status,
-          chiefComplaint: nextAppointmentResult.data.chief_complaint ?? "General follow-up",
-          videoRoomUrl: nextAppointmentResult.data.video_room_url ?? undefined,
-          notes: nextAppointmentResult.data.notes ?? undefined,
+          scheduledAt: safeNextAppointmentRow.scheduled_at,
+          durationMinutes: safeNextAppointmentRow.duration_minutes ?? 30,
+          type: safeNextAppointmentRow.type,
+          status: safeNextAppointmentRow.status,
+          chiefComplaint: safeNextAppointmentRow.chief_complaint ?? "General follow-up",
+          videoRoomUrl: safeNextAppointmentRow.video_room_url ?? undefined,
+          notes: safeNextAppointmentRow.notes ?? undefined,
         } satisfies Appointment;
       })()
     : null;
 
-  const latestCycle = latestCycleResult.data ? mapCycleLogRow(latestCycleResult.data) : null;
+  const latestCycle = safeLatestCycleRow ? mapCycleLogRow(safeLatestCycleRow) : null;
   const cycleDay = latestCycle ? differenceInCalendarDays(new Date(), new Date(latestCycle.periodStart)) + 1 : 0;
   const cycleSummary = latestCycle
     ? {
@@ -654,7 +631,7 @@ export async function getPatientDashboardData() {
       }
     : null;
 
-  const symptomLogs = (symptomLogsResult.data ?? []).map(mapSymptomLogRow);
+  const symptomLogs = safeSymptomLogRows.map(mapSymptomLogRow);
   const latestSymptomLog = symptomLogs.at(-1) ?? null;
   const insightPayload = symptomLogs.map((log) => ({
     loggedAt: log.loggedAt,
@@ -665,7 +642,15 @@ export async function getPatientDashboardData() {
     sleepHours: log.sleepHours,
     notes: log.notes,
   }));
-  const aiInsight = latestSymptomLog?.aiInsight ?? (insightPayload.length ? await generateAiInsight("symptom_insight", insightPayload) : null);
+    let aiInsight = latestSymptomLog?.aiInsight ?? null;
+
+  if (!aiInsight && insightPayload.length) {
+    try {
+      aiInsight = await generateAiInsight("symptom_insight", insightPayload);
+    } catch {
+      aiInsight = null;
+    }
+  }
 
   return {
     profile,
@@ -674,7 +659,7 @@ export async function getPatientDashboardData() {
     latestSymptomLog,
     aiInsight,
     insightPayload,
-    carePlan: parseCarePlan(carePlanResult.data),
+    carePlan: parseCarePlan(safeCarePlanRow),
     messages,
   };
 }
@@ -2953,3 +2938,5 @@ export async function getEmployerAdvancedAnalyticsData(rangeInput?: string): Pro
     monthlyComparison,
   };
 }
+
+
