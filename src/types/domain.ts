@@ -1,6 +1,6 @@
-import { ReactNode } from "react";
+import type { ReactNode } from "react";
 
-export type UserRole = "patient" | "provider" | "employer_admin" | "clinic_admin" | "super_admin" | "partner";
+﻿export type UserRole = "patient" | "provider" | "employer_admin" | "clinic_admin" | "super_admin" | "partner";
 
 export type ProviderSpecialty =
   | "ob_gyn"
@@ -113,6 +113,32 @@ export interface MessageThread {
     content: string;
     createdAt: string;
   }[];
+}
+
+export interface Prescription {
+  id: string;
+  medicationName: string;
+  dosage: string;
+  frequency: string;
+  instructions: string;
+  status: "active" | "completed" | "cancelled";
+  prescribedAt: string;
+  expiresAt?: string | null;
+  refillsRemaining: number;
+  providerName: string;
+  patientName?: string;
+}
+
+export interface LabResult {
+  id: string;
+  panelName: string;
+  status: "ordered" | "collected" | "resulted" | "reviewed";
+  orderedAt: string;
+  resultedAt?: string | null;
+  summary: string;
+  markers: Array<{ label: string; value: string; flag?: "normal" | "high" | "low" }>;
+  providerName: string;
+  patientName?: string;
 }
 
 export interface RecordItem {

@@ -4,7 +4,7 @@ import type { Route } from "next";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { ensureProfileForUser, getAuthenticatedRedirectPath, getCurrentProfileWithSync } from "@/lib/auth";
-import { serverEnv } from "@/lib/env";
+import { publicEnv } from "@/lib/env";
 import { loginSchema, signupSchema } from "@/lib/auth-form-schemas";
 import {
   getValidProviderInvitation,
@@ -87,7 +87,7 @@ export async function signupAction(formData: FormData) {
     email,
     password,
     options: {
-      emailRedirectTo: `${serverEnv.NEXT_PUBLIC_APP_URL}/dashboard`,
+      emailRedirectTo: `${publicEnv.NEXT_PUBLIC_APP_URL}/dashboard`,
       data: {
         full_name: fullName,
       },
@@ -328,3 +328,4 @@ export async function logoutAction() {
   await supabase.auth.signOut();
   redirect("/login?message=You have been signed out." as Route);
 }
+

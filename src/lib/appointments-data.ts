@@ -9,6 +9,7 @@ import {
   type BookedAppointmentRow,
   type GeneratedDateSlots,
 } from "@/lib/appointments";
+import { getSupabaseAdminClient } from "@/lib/supabase/admin";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 import type { Appointment, Provider } from "@/types/domain";
 
@@ -64,9 +65,9 @@ type ProfileRow = {
 };
 
 async function getProviderProfilesMap(profileIds: string[]) {
-  const supabase = await getSupabaseServerClient();
+  const admin = getSupabaseAdminClient();
   const { data, error } = profileIds.length
-    ? await supabase.from("profiles").select("id, full_name, avatar_url").in("id", profileIds)
+    ? await admin.from("profiles").select("id, full_name, avatar_url").in("id", profileIds)
     : { data: [], error: null };
 
   if (error) {
@@ -122,6 +123,7 @@ export async function getAppointmentsPageData(): Promise<AppointmentsPageData> {
   }
 
   const supabase = await getSupabaseServerClient();
+  const admin = getSupabaseAdminClient();
   const bookingWindowStart = startOfDay(new Date()).toISOString();
   const bookingWindowEnd = endOfDay(addDays(new Date(), 13)).toISOString();
 
@@ -132,7 +134,7 @@ export async function getAppointmentsPageData(): Promise<AppointmentsPageData> {
       .eq("patient_id", user.id)
       .in("status", ["scheduled", "in_progress"])
       .order("scheduled_at", { ascending: true }),
-    supabase
+    admin
       .from("providers")
       .select("id, profile_id, specialty, bio, languages, accepting_patients, consultation_fee_cents, rating, total_reviews")
       .eq("accepting_patients", true)
@@ -154,7 +156,7 @@ export async function getAppointmentsPageData(): Promise<AppointmentsPageData> {
 
   const [appointmentProviderRowsResult, availabilityResult, bookedAppointmentsResult] = await Promise.all([
     allProviderIds.length
-      ? supabase
+      ? admin
           .from("providers")
           .select("id, profile_id, specialty, bio, languages, accepting_patients, consultation_fee_cents, rating, total_reviews")
           .in("id", allProviderIds)
@@ -319,7 +321,8 @@ export async function getConsultationRoomData(appointmentId: string): Promise<Co
     return null;
   }
 
-  const { data: providerRow, error: providerError } = await supabase
+  const admin = getSupabaseAdminClient();
+  const { data: providerRow, error: providerError } = await admin
     .from("providers")
     .select("id, profile_id, specialty, bio, languages")
     .eq("id", appointmentRow.provider_id)
@@ -333,7 +336,7 @@ export async function getConsultationRoomData(appointmentId: string): Promise<Co
     return null;
   }
 
-  const { data: providerProfile, error: providerProfileError } = await supabase
+  const { data: providerProfile, error: providerProfileError } = await admin
     .from("profiles")
     .select("id, full_name, avatar_url")
     .eq("id", providerRow.profile_id)
@@ -444,3 +447,6 @@ export async function getConsultationRoomData(appointmentId: string): Promise<Co
     })),
   };
 }
+
+
+

@@ -1,28 +1,63 @@
-import { BellRing, MessageSquareMore, UserRoundCheck, UserRoundPlus } from "lucide-react";
-import { DashboardShell } from "@/components/health/dashboard-shell";
+import type { Route } from "next";
+import Link from "next/link";
+import { Toast } from "@/components/ui/Toast";
 import { Card } from "@/components/ui/card";
 import { StatCard } from "@/components/ui/stat-card";
-import { ClinicDashboard } from "@/features/clinic/clinic-dashboard";
-import { getClinicDashboardData } from "@/lib/data";
+import { DashboardShell } from "@/components/health/dashboard-shell";
+import { ClinicDashboardTabs, ClinicQuickLink } from "@/features/clinic/clinic-dashboard-tools";
+import { getClinicDashboardData } from "@/lib/clinic-admin-data";
 
-export default async function ClinicDashboardPage() {
+function parseMessage(value: string | string[] | undefined) {
+  return typeof value === "string" ? value : null;
+}
+
+export default async function ClinicDashboardPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
+  const params = await searchParams;
   const data = await getClinicDashboardData();
+  const message = parseMessage(params.message);
+  const error = parseMessage(params.error);
+  const tab = parseMessage(params.tab) ?? undefined;
 
   return (
     <DashboardShell title="Clinic dashboard" eyebrow="Operations and governance" section="clinic">
       <div className="space-y-6">
-        <div className="grid gap-4 md:grid-cols-4">
-          <StatCard title="Active providers" value={String(data.stats.activeProviders)} delta="Live provider roster" icon={UserRoundCheck} />
-          <StatCard title="Pending invites" value={String(data.stats.pendingInvites)} delta="Provider onboarding queue" icon={UserRoundPlus} />
-          <StatCard title="Open conversations" value={String(data.stats.openConversations)} delta="Patient-provider threads" icon={MessageSquareMore} />
-          <StatCard title="Recent notifications" value={String(data.stats.recentNotifications)} delta="Operational events in the last 7 days" icon={BellRing} />
+        {message ? <Toast message={message} variant="success" /> : null}
+        {error ? <Toast message={error} variant="error" /> : null}
+
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+          {data.stats.cards.map((card) => (
+            <Link key={card.title} href={card.href as Route}>
+              <StatCard title={card.title} value={card.value} delta={card.delta} />
+            </Link>
+          ))}
         </div>
-        <Card className="p-6">
-          <p className="text-sm leading-7 text-[var(--foreground-muted)]">
-            This operations workspace now reflects the actual database state: provider records, invitation flow, conversation load, and recent system notifications. It no longer relies on fabricated content or support-group queues.
-          </p>
-        </Card>
-        <ClinicDashboard {...data} />
+
+        <div className="grid gap-4 lg:grid-cols-3">
+          {data.stats.summary.map((item) => (
+            <Card key={item} className="p-5 text-sm leading-7 text-[var(--foreground-muted)]">
+              {item}
+            </Card>
+          ))}
+        </div>
+
+        <div className="grid gap-4 lg:grid-cols-3">
+          <ClinicQuickLink href="/clinic/content" label="Content library" detail="Review educational content, authors, and publishing state." />
+          <ClinicQuickLink href="/clinic/support-groups" label="Support groups" detail="Manage moderated groups and active community programming." />
+          <ClinicQuickLink href="/clinic/analytics" label="Platform analytics" detail="Track platform growth, usage trends, and completion rates." />
+        </div>
+
+        <ClinicDashboardTabs
+          initialTab={tab}
+          providers={data.providerManagement}
+          invitations={data.invitationQueue}
+          conversations={data.conversationLoad}
+          notifications={data.notifications}
+          redirectTo="/clinic/dashboard"
+        />
       </div>
     </DashboardShell>
   );

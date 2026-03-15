@@ -1,6 +1,7 @@
-﻿"use client";
+"use client";
 
 import { useEffect, useMemo, useState, useTransition } from "react";
+import type { RealtimePostgresChangesPayload } from "@supabase/supabase-js";
 import { useRouter } from "next/navigation";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
@@ -13,6 +14,13 @@ import type { MessageThread } from "@/types/domain";
 type Props = {
   threads: MessageThread[];
   currentUserId: string;
+};
+
+type MessageInsertRow = {
+  id: string;
+  sender_id: string | null;
+  content: string;
+  created_at: string | null;
 };
 
 export function MessagingView({ threads: initialThreads, currentUserId }: Props) {
@@ -41,12 +49,13 @@ export function MessagingView({ threads: initialThreads, currentUserId }: Props)
           table: "messages",
           filter: `conversation_id=eq.${activeThread.id}`,
         },
-        (payload) => {
+        (payload: RealtimePostgresChangesPayload<Record<string, unknown>>) => {
+          const row = payload.new as MessageInsertRow;
           const nextMessage: MessageThread["messages"][number] = {
-            id: String(payload.new.id),
-            sender: payload.new.sender_id === currentUserId ? "patient" : "provider",
-            content: String(payload.new.content),
-            createdAt: String(payload.new.created_at),
+            id: String(row.id),
+            sender: row.sender_id === currentUserId ? "patient" : "provider",
+            content: String(row.content),
+            createdAt: String(row.created_at),
           };
 
           setThreads((current) =>

@@ -1,5 +1,4 @@
-import type { Metadata } from "next";
-import { redirect } from "next/navigation";
+﻿import type { Metadata } from "next";
 import { AiIntelligenceSection } from "@/components/landing/ai-intelligence-section";
 import { EmployersSection } from "@/components/landing/employers-section";
 import { FinalCtaSection } from "@/components/landing/final-cta-section";
@@ -10,22 +9,14 @@ import { LandingNav } from "@/components/landing/landing-nav";
 import { SocialProofBar } from "@/components/landing/social-proof-bar";
 import { SpecialtiesSection } from "@/components/landing/specialties-section";
 import { TestimonialsSection } from "@/components/landing/testimonials-section";
-import { getAuthenticatedRedirectPath, getCurrentProfileWithSync, getCurrentUser } from "@/lib/auth";
 
 export const metadata: Metadata = {
-  title: "Maven Clinic — Virtual Women's Health",
+  title: "Maven Clinic â€” Virtual Women's Health",
 };
 
 export const revalidate = 3600;
 
-export default async function HomePage() {
-  const user = await getCurrentUser();
-
-  if (user) {
-    const profile = await getCurrentProfileWithSync(user);
-    redirect(getAuthenticatedRedirectPath(profile));
-  }
-
+export default function HomePage() {
   return (
     <>
       <LandingNav />

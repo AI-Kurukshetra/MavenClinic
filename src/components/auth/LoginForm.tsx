@@ -1,33 +1,21 @@
 "use client";
 
+import type { Route } from "next";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { FormEvent, useMemo, useState } from "react";
 import { Eye, EyeOff, LoaderCircle, Lock, Mail } from "lucide-react";
-import { useFormStatus } from "react-dom";
 import { AuthInputField } from "@/components/auth/AuthInputField";
 import { loginSchema } from "@/lib/auth-form-schemas";
+import { getAuthenticatedRedirectPath, type RoleAwareProfile } from "@/lib/roles";
+import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 
 type Props = {
-  action: (formData: FormData) => void | Promise<void>;
+  action?: (formData: FormData) => void | Promise<void>;
   serverError?: string;
   serverMessage?: string;
   next?: string;
 };
-
-function SubmitButton() {
-  const { pending } = useFormStatus();
-
-  return (
-    <button
-      type="submit"
-      disabled={pending}
-      className="flex h-[52px] w-full items-center justify-center gap-2 rounded-xl bg-[var(--rose-500)] text-base font-medium text-white transition hover:bg-[var(--rose-600)] disabled:cursor-not-allowed disabled:opacity-75"
-    >
-      {pending ? <LoaderCircle className="h-4 w-4 animate-spin" /> : null}
-      {pending ? "Signing in..." : "Sign in"}
-    </button>
-  );
-}
 
 function getServerFieldErrors(serverError?: string) {
   const message = serverError?.toLowerCase() ?? "";
@@ -43,33 +31,79 @@ function getServerFieldErrors(serverError?: string) {
   return {};
 }
 
-export function LoginForm({ action, serverError, serverMessage, next }: Props) {
+function getSafeNextPath(value: string | undefined) {
+  return value && value.startsWith("/") && !value.startsWith("//") ? value : null;
+}
+
+export function LoginForm(props: Props) {
+  const { serverError, serverMessage, next } = props;
+  const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = useState<Partial<Record<"email" | "password", string>>>({});
   const serverFieldErrors = useMemo(() => getServerFieldErrors(serverError), [serverError]);
 
-  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
     const result = loginSchema.safeParse({ email, password, next });
 
-    if (result.success) {
-      setFieldErrors({});
+    if (!result.success) {
+      const nextErrors: Partial<Record<"email" | "password", string>> = {};
+
+      for (const issue of result.error.issues) {
+        const field = issue.path[0];
+        if (field === "email" || field === "password") {
+          nextErrors[field] = issue.message;
+        }
+      }
+
+      setFieldErrors(nextErrors);
       return;
     }
 
-    event.preventDefault();
-    const nextErrors: Partial<Record<"email" | "password", string>> = {};
+    setFieldErrors({});
+    setSubmitError(null);
+    setIsSubmitting(true);
 
-    for (const issue of result.error.issues) {
-      const field = issue.path[0];
-      if (field === "email" || field === "password") {
-        nextErrors[field] = issue.message;
+    try {
+      const supabase = getSupabaseBrowserClient();
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email: result.data.email,
+        password: result.data.password,
+      });
+
+      if (error || !data.user) {
+        setFieldErrors({ password: "Wrong email or password." });
+        return;
       }
-    }
 
-    setFieldErrors(nextErrors);
+      const { data: profileData } = await supabase
+        .from("profiles")
+        .select("role, onboarding_complete")
+        .eq("id", data.user.id)
+        .maybeSingle();
+
+      const profile: RoleAwareProfile = {
+        role: profileData?.role ?? (typeof data.user.user_metadata?.role === "string" ? data.user.user_metadata.role : null),
+        onboarding_complete: profileData?.onboarding_complete ?? Boolean(data.user.user_metadata?.onboardingComplete),
+      };
+
+      const destination = getSafeNextPath(result.data.next) ?? getAuthenticatedRedirectPath(profile);
+
+      router.replace(destination as Route);
+      router.refresh();
+    } catch {
+      setSubmitError("Unable to sign in right now. Please try again.");
+    } finally {
+      setIsSubmitting(false);
+    }
   }
+
+  const genericError = submitError ?? (serverError && !serverFieldErrors.email && !serverFieldErrors.password ? serverError : null);
 
   return (
     <div className="space-y-8 auth-page-enter">
@@ -85,12 +119,11 @@ export function LoginForm({ action, serverError, serverMessage, next }: Props) {
       </div>
 
       {serverMessage ? <div className="rounded-2xl border border-[rgba(61,191,173,0.24)] bg-[var(--teal-50)] px-4 py-3 text-sm text-[var(--teal-700)]">{serverMessage}</div> : null}
-      {serverError && !serverFieldErrors.email && !serverFieldErrors.password ? (
-        <div className="rounded-2xl border border-[rgba(212,88,123,0.14)] bg-[var(--rose-50)] px-4 py-3 text-sm text-[var(--rose-700)]">{serverError}</div>
+      {genericError ? (
+        <div className="rounded-2xl border border-[rgba(212,88,123,0.14)] bg-[var(--rose-50)] px-4 py-3 text-sm text-[var(--rose-700)]">{genericError}</div>
       ) : null}
 
-      <form action={action} onSubmit={handleSubmit} className="space-y-5">
-        <input type="hidden" name="next" value={next ?? ""} />
+      <form onSubmit={handleSubmit} className="space-y-5">
         <AuthInputField
           id="login-email"
           name="email"
@@ -102,6 +135,7 @@ export function LoginForm({ action, serverError, serverMessage, next }: Props) {
           onChange={(event) => {
             setEmail(event.target.value);
             setFieldErrors((current) => ({ ...current, email: undefined }));
+            setSubmitError(null);
           }}
           error={fieldErrors.email ?? serverFieldErrors.email}
           leftIcon={<Mail className="h-4 w-4" />}
@@ -119,6 +153,7 @@ export function LoginForm({ action, serverError, serverMessage, next }: Props) {
             onChange={(event) => {
               setPassword(event.target.value);
               setFieldErrors((current) => ({ ...current, password: undefined }));
+              setSubmitError(null);
             }}
             error={fieldErrors.password ?? serverFieldErrors.password}
             leftIcon={<Lock className="h-4 w-4" />}
@@ -140,7 +175,14 @@ export function LoginForm({ action, serverError, serverMessage, next }: Props) {
           </div>
         </div>
 
-        <SubmitButton />
+        <button
+          type="submit"
+          disabled={isSubmitting}
+          className="flex h-[52px] w-full items-center justify-center gap-2 rounded-xl bg-[var(--rose-500)] text-base font-medium text-white transition hover:bg-[var(--rose-600)] disabled:cursor-not-allowed disabled:opacity-75"
+        >
+          {isSubmitting ? <LoaderCircle className="h-4 w-4 animate-spin" /> : null}
+          {isSubmitting ? "Signing in..." : "Sign in"}
+        </button>
       </form>
 
       <div className="space-y-4 text-center">

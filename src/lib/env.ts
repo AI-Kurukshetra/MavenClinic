@@ -16,25 +16,37 @@ const publicEnvSchema = z.object({
   NEXT_PUBLIC_AI_INSIGHTS_ENABLED: z.enum(["true", "false"]).default("false"),
 });
 
-const serverEnvSchema = publicEnvSchema.extend({
+const serverEnvSchema = z.object({
   SUPABASE_SERVICE_ROLE_KEY: z.string().min(1),
   ANTHROPIC_API_KEY: z.string().min(1).optional(),
   DAILY_API_KEY: z.string().min(1).optional(),
 });
 
-export const env = publicEnvSchema.parse({
+export const publicEnv = publicEnvSchema.parse({
   NEXT_PUBLIC_SUPABASE_URL: process.env.NEXT_PUBLIC_SUPABASE_URL,
   NEXT_PUBLIC_SUPABASE_ANON_KEY: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
   NEXT_PUBLIC_APP_URL: resolveAppUrl(),
   NEXT_PUBLIC_AI_INSIGHTS_ENABLED: process.env.NEXT_PUBLIC_AI_INSIGHTS_ENABLED,
 });
 
-export const serverEnv = serverEnvSchema.parse({
-  NEXT_PUBLIC_SUPABASE_URL: process.env.NEXT_PUBLIC_SUPABASE_URL,
-  NEXT_PUBLIC_SUPABASE_ANON_KEY: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
-  NEXT_PUBLIC_APP_URL: resolveAppUrl(),
-  NEXT_PUBLIC_AI_INSIGHTS_ENABLED: process.env.NEXT_PUBLIC_AI_INSIGHTS_ENABLED,
-  SUPABASE_SERVICE_ROLE_KEY: process.env.SUPABASE_SERVICE_ROLE_KEY,
-  ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY,
-  DAILY_API_KEY: process.env.DAILY_API_KEY,
+type ServerEnv = z.infer<typeof serverEnvSchema>;
+
+let parsedServerEnv: ServerEnv | null = null;
+
+function getServerEnv(): ServerEnv {
+  if (!parsedServerEnv) {
+    parsedServerEnv = serverEnvSchema.parse({
+      SUPABASE_SERVICE_ROLE_KEY: process.env.SUPABASE_SERVICE_ROLE_KEY,
+      ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY,
+      DAILY_API_KEY: process.env.DAILY_API_KEY,
+    });
+  }
+
+  return parsedServerEnv;
+}
+
+export const serverEnv = new Proxy({} as ServerEnv, {
+  get(_target, property) {
+    return getServerEnv()[property as keyof ServerEnv];
+  },
 });

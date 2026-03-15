@@ -56,7 +56,7 @@ export function getAuthenticatedRedirectPath(profile: RoleAwareProfile | null) {
   }
 
   if (profile?.role === "partner") {
-    return "/partner";
+    return "/partner/dashboard";
   }
 
   return profile?.onboarding_complete ? "/dashboard" : "/onboarding";

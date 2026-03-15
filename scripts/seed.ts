@@ -79,6 +79,30 @@ type NotificationSeed = {
   readAt?: string | null;
 };
 
+type PrescriptionSeed = {
+  patientEmail: string;
+  providerEmail: string;
+  medicationName: string;
+  dosage: string;
+  frequency: string;
+  instructions: string;
+  status?: "active" | "completed" | "cancelled";
+  refillsRemaining?: number;
+  prescribedAt: string;
+  expiresAt?: string | null;
+};
+
+type LabResultSeed = {
+  patientEmail: string;
+  providerEmail: string;
+  panelName: string;
+  status: "ordered" | "collected" | "resulted" | "reviewed";
+  summary: string;
+  markers?: Array<{ label: string; value: string; flag?: "normal" | "high" | "low" }>;
+  orderedAt: string;
+  resultedAt?: string | null;
+};
+
 type InvitationSeed = {
   email: string;
   role: "provider" | "employer_admin";
@@ -86,6 +110,21 @@ type InvitationSeed = {
   expiresAt: string;
   createdAt: string;
   token: string;
+};
+
+type PartnerAccessSeed = {
+  partnerEmail: string;
+  patientEmail: string;
+  accessLevel: "view_appointments" | "view_pregnancy" | "view_fertility" | "full";
+  createdAt: string;
+};
+
+type PregnancyRecordSeed = {
+  patientEmail: string;
+  partnerEmail: string;
+  status: "active" | "tracking" | "complete" | "loss";
+  currentWeek: number;
+  dueDate: string;
 };
 
 function loadEnvFile(filePath: string) {
@@ -502,6 +541,8 @@ async function clearDemoWorkspace(patientIds: string[], demoUserIds: string[], p
 
   await supabase.from("notifications").delete().in("recipient_id", demoUserIds);
   await supabase.from("notifications").delete().in("actor_id", demoUserIds);
+  await supabase.from("partner_access").delete().in("partner_id", demoUserIds);
+  await supabase.from("pregnancy_records").delete().in("partner_id", demoUserIds);
 
   if (conversationIds.length) {
     await supabase.from("messages").delete().in("conversation_id", conversationIds);
@@ -509,15 +550,21 @@ async function clearDemoWorkspace(patientIds: string[], demoUserIds: string[], p
   }
 
   if (patientIds.length) {
+    await supabase.from("partner_access").delete().in("patient_id", patientIds);
+    await supabase.from("pregnancy_records").delete().in("patient_id", patientIds);
     await supabase.from("care_plans").delete().in("patient_id", patientIds);
     await supabase.from("symptom_logs").delete().in("patient_id", patientIds);
     await supabase.from("cycle_logs").delete().in("patient_id", patientIds);
     await supabase.from("fertility_data").delete().in("patient_id", patientIds);
+    await supabase.from("prescriptions").delete().in("patient_id", patientIds);
+    await supabase.from("lab_results").delete().in("patient_id", patientIds);
   }
 
   if (providerIds.length) {
     await supabase.from("care_plans").delete().in("provider_id", providerIds);
     await supabase.from("provider_availability").delete().in("provider_id", providerIds);
+    await supabase.from("prescriptions").delete().in("provider_id", providerIds);
+    await supabase.from("lab_results").delete().in("provider_id", providerIds);
   }
 
   if (appointmentIds.length) {
@@ -711,6 +758,133 @@ async function seedDemoDataset(users: AuthUserResult[], providerIdByEmail: Map<s
   }
   console.log(`  + Seeded ${carePlanRows.length} care plans`);
 
+  const prescriptions: PrescriptionSeed[] = [
+    {
+      patientEmail: "sarah.patient@mavenclinic.dev",
+      providerEmail: "sarah.chen@mavenclinic.dev",
+      medicationName: "Progesterone",
+      dosage: "200 mg",
+      frequency: "Nightly",
+      instructions: "Take one capsule nightly with food for 14 days after ovulation.",
+      refillsRemaining: 1,
+      prescribedAt: isoAt(subDays(now, 10), 9, 0),
+      expiresAt: addDays(now, 40).toISOString(),
+    },
+    {
+      patientEmail: "priya.patient@mavenclinic.dev",
+      providerEmail: "amara.osei@mavenclinic.dev",
+      medicationName: "Prenatal vitamin",
+      dosage: "1 tablet",
+      frequency: "Daily",
+      instructions: "Take daily with breakfast and continue through the next cycle.",
+      refillsRemaining: 3,
+      prescribedAt: isoAt(subDays(now, 22), 10, 15),
+      expiresAt: addDays(now, 90).toISOString(),
+    },
+    {
+      patientEmail: "maria.patient@mavenclinic.dev",
+      providerEmail: "elena.rodriguez@mavenclinic.dev",
+      medicationName: "Estradiol patch",
+      dosage: "0.05 mg",
+      frequency: "Twice weekly",
+      instructions: "Apply a new patch every 3 to 4 days and monitor hot flash frequency.",
+      refillsRemaining: 2,
+      prescribedAt: isoAt(subDays(now, 16), 14, 0),
+      expiresAt: addDays(now, 60).toISOString(),
+    },
+  ];
+
+  const prescriptionRows = prescriptions.flatMap((item) => {
+    const patientId = userIdByEmail.get(item.patientEmail);
+    const providerId = providerIdByEmail.get(item.providerEmail);
+    return patientId && providerId
+      ? [{
+          patient_id: patientId,
+          provider_id: providerId,
+          medication_name: item.medicationName,
+          dosage: item.dosage,
+          frequency: item.frequency,
+          instructions: item.instructions,
+          status: item.status ?? "active",
+          refills_remaining: item.refillsRemaining ?? 0,
+          prescribed_at: item.prescribedAt,
+          expires_at: item.expiresAt ?? null,
+        }]
+      : [];
+  });
+
+  if (prescriptionRows.length) {
+    const { error } = await supabase.from("prescriptions").insert(prescriptionRows);
+    if (error) {
+      throw new Error(`Failed seeding prescriptions: ${error.message}`);
+    }
+  }
+  console.log(`  + Seeded ${prescriptionRows.length} prescriptions`);
+
+  const labResults: LabResultSeed[] = [
+    {
+      patientEmail: "sarah.patient@mavenclinic.dev",
+      providerEmail: "sarah.chen@mavenclinic.dev",
+      panelName: "Hormone panel",
+      status: "reviewed",
+      summary: "LH and estradiol remain within the expected range. Continue current tracking plan before the next follow-up.",
+      markers: [
+        { label: "LH", value: "8.2 mIU/mL", flag: "normal" },
+        { label: "FSH", value: "6.1 mIU/mL", flag: "normal" },
+        { label: "TSH", value: "2.3 uIU/mL", flag: "normal" },
+      ],
+      orderedAt: isoAt(subDays(now, 18), 8, 0),
+      resultedAt: isoAt(subDays(now, 12), 11, 0),
+    },
+    {
+      patientEmail: "priya.patient@mavenclinic.dev",
+      providerEmail: "amara.osei@mavenclinic.dev",
+      panelName: "Fertility baseline labs",
+      status: "resulted",
+      summary: "AMH and prolactin returned. Review together at the next fertility consult.",
+      markers: [
+        { label: "AMH", value: "2.8 ng/mL", flag: "normal" },
+        { label: "Prolactin", value: "18 ng/mL", flag: "normal" },
+      ],
+      orderedAt: isoAt(subDays(now, 28), 9, 0),
+      resultedAt: isoAt(subDays(now, 21), 15, 0),
+    },
+    {
+      patientEmail: "maria.patient@mavenclinic.dev",
+      providerEmail: "elena.rodriguez@mavenclinic.dev",
+      panelName: "Menopause symptom panel",
+      status: "ordered",
+      summary: "Check estradiol and thyroid markers before discussing hormone therapy adjustments.",
+      orderedAt: isoAt(subDays(now, 2), 10, 30),
+      resultedAt: null,
+    },
+  ];
+
+  const labRows = labResults.flatMap((item) => {
+    const patientId = userIdByEmail.get(item.patientEmail);
+    const providerId = providerIdByEmail.get(item.providerEmail);
+    return patientId && providerId
+      ? [{
+          patient_id: patientId,
+          provider_id: providerId,
+          panel_name: item.panelName,
+          status: item.status,
+          summary: item.summary,
+          markers: item.markers ?? [],
+          ordered_at: item.orderedAt,
+          resulted_at: item.resultedAt ?? null,
+        }]
+      : [];
+  });
+
+  if (labRows.length) {
+    const { error } = await supabase.from("lab_results").insert(labRows);
+    if (error) {
+      throw new Error(`Failed seeding lab results: ${error.message}`);
+    }
+  }
+  console.log(`  + Seeded ${labRows.length} lab results`);
+
   const sarahId = userIdByEmail.get("sarah.patient@mavenclinic.dev");
   if (sarahId) {
     const symptomRows = [
@@ -748,6 +922,57 @@ async function seedDemoDataset(users: AuthUserResult[], providerIdByEmail: Map<s
       throw new Error(`Failed seeding fertility data: ${fertilityResult.error.message}`);
     }
   }
+  const partnerAccessRows: PartnerAccessSeed[] = [
+    {
+      partnerEmail: "partner.demo@mavenclinic.dev",
+      patientEmail: "sarah.patient@mavenclinic.dev",
+      accessLevel: "full",
+      createdAt: isoAt(subDays(now, 20), 9, 0),
+    },
+  ];
+
+  const partnerAccessPayload = partnerAccessRows.flatMap((row) => {
+    const partnerId = userIdByEmail.get(row.partnerEmail);
+    const patientId = userIdByEmail.get(row.patientEmail);
+    return partnerId && patientId
+      ? [{ partner_id: partnerId, patient_id: patientId, access_level: row.accessLevel, created_at: row.createdAt, revoked_at: null }]
+      : [];
+  });
+
+  if (partnerAccessPayload.length) {
+    const { error } = await supabase.from("partner_access").insert(partnerAccessPayload);
+    if (error) {
+      throw new Error(`Failed seeding partner access: ${error.message}`);
+    }
+  }
+  console.log(`  + Seeded ${partnerAccessPayload.length} partner access rows`);
+
+  const pregnancyRecords: PregnancyRecordSeed[] = [
+    {
+      patientEmail: "sarah.patient@mavenclinic.dev",
+      partnerEmail: "partner.demo@mavenclinic.dev",
+      status: "active",
+      currentWeek: 24,
+      dueDate: addDays(now, 112).toISOString().slice(0, 10),
+    },
+  ];
+
+  const pregnancyPayload = pregnancyRecords.flatMap((row) => {
+    const patientId = userIdByEmail.get(row.patientEmail);
+    const partnerId = userIdByEmail.get(row.partnerEmail);
+    return patientId && partnerId
+      ? [{ patient_id: patientId, partner_id: partnerId, status: row.status, current_week: row.currentWeek, due_date: row.dueDate }]
+      : [];
+  });
+
+  if (pregnancyPayload.length) {
+    const { error } = await supabase.from("pregnancy_records").insert(pregnancyPayload);
+    if (error) {
+      throw new Error(`Failed seeding pregnancy records: ${error.message}`);
+    }
+  }
+  console.log(`  + Seeded ${pregnancyPayload.length} pregnancy records`);
+
   console.log("  + Seeded patient health tracking data");
   const notifications: NotificationSeed[] = [
     { recipientEmail: "sarah.patient@mavenclinic.dev", actorEmail: "sarah.chen@mavenclinic.dev", appointmentKey: "sarah-upcoming-obgyn", type: "message_received", title: "Dr. Sarah Chen sent a message", body: "Your provider reviewed your symptom notes before tomorrow's visit.", link: "/messages", createdAt: isoAt(subDays(now, 1), 19, 10) },

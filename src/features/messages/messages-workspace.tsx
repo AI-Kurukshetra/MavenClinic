@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
+import type { RealtimePostgresChangesPayload } from "@supabase/supabase-js";
 import Link from "next/link";
 import { format, isSameDay, isToday } from "date-fns";
 import {
@@ -33,6 +34,17 @@ type AttachmentState = {
 };
 
 type Props = MessagingPageData;
+
+type MessageRow = {
+  id: string;
+  conversation_id: string;
+  sender_id: string | null;
+  content: string;
+  created_at: string | null;
+  read_at: string | null;
+  attachment_path: string | null;
+  attachment_name: string | null;
+};
 
 function sortConversations(items: ConversationListItem[]) {
   return [...items].sort((left, right) => new Date(right.lastMessageAt).getTime() - new Date(left.lastMessageAt).getTime());
@@ -176,22 +188,23 @@ export function MessagesWorkspace({ currentUserId, role, conversations: initialC
           schema: "public",
           table: "messages",
         },
-        (payload) => {
-          const conversationId = String(payload.new.conversation_id);
+        (payload: RealtimePostgresChangesPayload<Record<string, unknown>>) => {
+          const row = payload.new as MessageRow;
+          const conversationId = String(row.conversation_id);
           if (!conversationIds.includes(conversationId)) {
             return;
           }
 
           const incomingMessage: ConversationMessage = {
-            id: String(payload.new.id),
-            senderId: String(payload.new.sender_id),
-            senderRole: payload.new.sender_id === currentUserId ? role : role === "patient" ? "provider" : "patient",
-            senderName: payload.new.sender_id === currentUserId ? "You" : "Participant",
-            content: String(payload.new.content),
-            createdAt: String(payload.new.created_at),
-            readAt: payload.new.read_at ? String(payload.new.read_at) : null,
-            attachmentPath: typeof payload.new.attachment_path === "string" ? payload.new.attachment_path : undefined,
-            attachmentName: typeof payload.new.attachment_name === "string" ? payload.new.attachment_name : undefined,
+            id: String(row.id),
+            senderId: String(row.sender_id),
+            senderRole: row.sender_id === currentUserId ? role : role === "patient" ? "provider" : "patient",
+            senderName: row.sender_id === currentUserId ? "You" : "Participant",
+            content: String(row.content),
+            createdAt: String(row.created_at),
+            readAt: row.read_at ? String(row.read_at) : null,
+            attachmentPath: typeof row.attachment_path === "string" ? row.attachment_path : undefined,
+            attachmentName: typeof row.attachment_name === "string" ? row.attachment_name : undefined,
           };
 
           setConversations((current) => sortConversations(current.map((conversation) => {
@@ -199,7 +212,7 @@ export function MessagesWorkspace({ currentUserId, role, conversations: initialC
               return conversation;
             }
 
-            const incrementUnread = payload.new.sender_id !== currentUserId && activeConversationId !== conversationId;
+            const incrementUnread = row.sender_id !== currentUserId && activeConversationId !== conversationId;
 
             return {
               ...conversation,
@@ -232,18 +245,19 @@ export function MessagesWorkspace({ currentUserId, role, conversations: initialC
           table: "messages",
           filter: `conversation_id=eq.${activeConversationId}`,
         },
-        async (payload) => {
+        async (payload: RealtimePostgresChangesPayload<Record<string, unknown>>) => {
+          const row = payload.new as MessageRow;
           const incomingMessage: ConversationMessage = {
-            id: String(payload.new.id),
-            senderId: String(payload.new.sender_id),
-            senderRole: payload.new.sender_id === currentUserId ? role : role === "patient" ? "provider" : "patient",
-            senderName: payload.new.sender_id === currentUserId ? "You" : activeThread?.participantName ?? "Participant",
-            senderAvatarUrl: payload.new.sender_id === currentUserId ? undefined : activeThread?.participantAvatarUrl,
-            content: String(payload.new.content),
-            createdAt: String(payload.new.created_at),
-            readAt: payload.new.read_at ? String(payload.new.read_at) : null,
-            attachmentPath: typeof payload.new.attachment_path === "string" ? payload.new.attachment_path : undefined,
-            attachmentName: typeof payload.new.attachment_name === "string" ? payload.new.attachment_name : undefined,
+            id: String(row.id),
+            senderId: String(row.sender_id),
+            senderRole: row.sender_id === currentUserId ? role : role === "patient" ? "provider" : "patient",
+            senderName: row.sender_id === currentUserId ? "You" : activeThread?.participantName ?? "Participant",
+            senderAvatarUrl: row.sender_id === currentUserId ? undefined : activeThread?.participantAvatarUrl,
+            content: String(row.content),
+            createdAt: String(row.created_at),
+            readAt: row.read_at ? String(row.read_at) : null,
+            attachmentPath: typeof row.attachment_path === "string" ? row.attachment_path : undefined,
+            attachmentName: typeof row.attachment_name === "string" ? row.attachment_name : undefined,
           };
 
           setThreadCache((current) => {
@@ -260,13 +274,13 @@ export function MessagesWorkspace({ currentUserId, role, conversations: initialC
               ...current,
               [activeConversationId]: {
                 ...thread,
-                unreadCount: payload.new.sender_id === currentUserId ? thread.unreadCount : 0,
+                unreadCount: row.sender_id === currentUserId ? thread.unreadCount : 0,
                 messages: [...thread.messages, incomingMessage],
               },
             };
           });
 
-          if (payload.new.sender_id !== currentUserId) {
+          if (row.sender_id !== currentUserId) {
             await fetch(`/api/conversations/${activeConversationId}`, { method: "PATCH" }).catch(() => undefined);
             setConversations((current) => current.map((conversation) =>
               conversation.id === activeConversationId
@@ -524,15 +538,20 @@ export function MessagesWorkspace({ currentUserId, role, conversations: initialC
 
       <div className="grid gap-6 xl:grid-cols-[360px_1fr]">
         <Card className={cn("p-0", mobileThreadOpen ? "hidden xl:block" : "block")}>
-          <div className="flex items-center justify-between gap-3 border-b border-[var(--border)] px-4 py-4 sm:px-5">
-            <div>
-              <p className="text-sm uppercase tracking-[0.2em] text-[var(--teal-700)]">Secure messaging</p>
-              <h2 className="mt-2 text-2xl font-semibold">Conversations</h2>
+          <div className="border-b border-[var(--border)] px-4 py-4 sm:px-5">
+            <p className="text-sm uppercase tracking-[0.2em] text-[var(--teal-700)]">Secure messaging</p>
+            <div className="mt-3 flex items-center justify-between gap-3">
+              <h2 className="text-2xl font-semibold">Conversations</h2>
+              <Button
+                type="button"
+                size="sm"
+                onClick={() => setIsModalOpen(true)}
+                className="h-auto gap-2 rounded-lg px-3 py-1.5 text-sm"
+              >
+                <MessageSquarePlus className="h-4 w-4" />
+                New conversation
+              </Button>
             </div>
-            <Button type="button" size="sm" onClick={() => setIsModalOpen(true)} className="gap-2">
-              <MessageSquarePlus className="h-4 w-4" />
-              New conversation
-            </Button>
           </div>
 
           <div className="px-4 py-4 sm:px-5">

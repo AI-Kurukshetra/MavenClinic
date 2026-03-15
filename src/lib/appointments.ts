@@ -162,6 +162,14 @@ export function formatAvailabilityDay(value: string | number) {
   return index === null ? String(value) : weekdayLabels[index];
 }
 
+export function formatTime(time: string): string {
+  const [hours, minutes] = time.split(":").map(Number);
+  const period = hours >= 12 ? "PM" : "AM";
+  const displayHour = hours % 12 || 12;
+  const displayMin = minutes.toString().padStart(2, "0");
+  return `${displayHour}:${displayMin} ${period}`;
+}
+
 export function getSpecialtyLabel(value: string) {
   return appointmentSpecialties.find((item) => item.key === value)?.label ?? titleCase(value);
 }

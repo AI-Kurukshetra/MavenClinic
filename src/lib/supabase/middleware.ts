@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
+import type { User } from "@supabase/supabase-js";
 import { createServerClient } from "@supabase/ssr";
-import { env } from "@/lib/env";
+import { publicEnv } from "@/lib/env";
 import {
   getAuthenticatedRedirectPath,
   patientRoutePrefixes,
@@ -18,6 +19,14 @@ type RouteRule = {
 };
 
 const authEntryPrefixes = ["/login", "/signup", "/register"] as const;
+const validRoles = new Set<AppRole>([
+  "patient",
+  "provider",
+  "employer_admin",
+  "clinic_admin",
+  "super_admin",
+  "partner",
+]);
 
 const roleRouteRules: RouteRule[] = [
   { prefix: "/provider", roles: ["provider"] },
@@ -42,6 +51,41 @@ function isProtectedPatientPath(pathname: string) {
 
 function getRequiredRoles(pathname: string) {
   return roleRouteRules.find((rule) => matchesPath(pathname, rule.prefix))?.roles ?? null;
+}
+
+function resolveRole(value: unknown): AppRole | null {
+  return typeof value === "string" && validRoles.has(value as AppRole) ? (value as AppRole) : null;
+}
+
+function hasCompletedOnboardingMetadata(user: User) {
+  const metadata = user.user_metadata ?? {};
+
+  if (metadata.onboardingComplete === true) {
+    return true;
+  }
+
+  const keys = [
+    "pronouns",
+    "languagePreference",
+    "healthGoals",
+    "conditions",
+    "medications",
+    "insuranceCarrier",
+    "memberId",
+    "specialtyNeeded",
+    "preferredLanguage",
+    "genderPreference",
+  ] as const;
+
+  return keys.some((key) => {
+    const value = metadata[key];
+
+    if (Array.isArray(value)) {
+      return value.length > 0;
+    }
+
+    return typeof value === "string" ? value.trim().length > 0 : Boolean(value);
+  });
 }
 
 function buildPermissionsPolicy(pathname: string) {
@@ -111,8 +155,8 @@ export async function updateSession(request: NextRequest) {
   let response = NextResponse.next({ request });
 
   const supabase = createServerClient(
-    env.NEXT_PUBLIC_SUPABASE_URL,
-    env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
+    publicEnv.NEXT_PUBLIC_SUPABASE_URL,
+    publicEnv.NEXT_PUBLIC_SUPABASE_ANON_KEY,
     {
       cookies: {
         getAll() {
@@ -149,23 +193,21 @@ export async function updateSession(request: NextRequest) {
     .eq("id", user.id)
     .maybeSingle();
 
-  const profile: MiddlewareProfile | null = profileData
-    ? {
-        role: (profileData.role as AppRole | null) ?? null,
-        onboarding_complete: profileData.onboarding_complete ?? null,
-      }
-    : null;
+  const profile: MiddlewareProfile | null = {
+    role: (profileData?.role as AppRole | null) ?? resolveRole(user.user_metadata?.role),
+    onboarding_complete: profileData?.onboarding_complete ?? hasCompletedOnboardingMetadata(user),
+  };
 
-  if (pathname === "/" || isAuthEntryPath(pathname)) {
+  if (isAuthEntryPath(pathname)) {
     return redirectTo(request, getAuthenticatedRedirectPath(profile));
   }
 
   if (onboardingPath) {
-    if (profile?.role && profile.role !== "patient") {
+    if (profile.role && profile.role !== "patient") {
       return redirectTo(request, getAuthenticatedRedirectPath(profile));
     }
 
-    if (profile?.onboarding_complete) {
+    if (profile.onboarding_complete) {
       return redirectTo(request, "/dashboard");
     }
 
@@ -173,18 +215,19 @@ export async function updateSession(request: NextRequest) {
   }
 
   if (patientAppPath) {
-    if (profile?.role && profile.role !== "patient") {
+    if (profile.role && profile.role !== "patient") {
       return redirectTo(request, getAuthenticatedRedirectPath(profile));
     }
 
-    if (!profile?.onboarding_complete) {
+    if (!profile.onboarding_complete) {
       return redirectTo(request, "/onboarding");
     }
   }
 
-  if (requiredRoles && !requiredRoles.includes((profile?.role as AppRole | null) ?? "patient")) {
+  if (requiredRoles && !requiredRoles.includes((profile.role as AppRole | null) ?? "patient")) {
     return redirectTo(request, getAuthenticatedRedirectPath(profile));
   }
 
   return applySecurityHeaders(response, pathname);
 }
+

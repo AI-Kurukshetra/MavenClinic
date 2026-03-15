@@ -1,6 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
-import { serverEnv } from "@/lib/env";
+import { publicEnv, serverEnv } from "@/lib/env";
 import {
   buildCarePlanPrompt,
   buildCyclePredictionPrompt,
@@ -68,7 +68,7 @@ const promptBuilders: Record<InsightType, (data: unknown) => string> = {
 };
 
 function isAiInsightsEnabled() {
-  return serverEnv.NEXT_PUBLIC_AI_INSIGHTS_ENABLED === "true";
+  return publicEnv.NEXT_PUBLIC_AI_INSIGHTS_ENABLED === "true";
 }
 
 function parseClaudeResponse(type: InsightType, value: string) {
@@ -214,3 +214,4 @@ export const aiRequestSchema = z.object({
 });
 
 export type AiRequestInput = z.infer<typeof aiRequestSchema>;
+

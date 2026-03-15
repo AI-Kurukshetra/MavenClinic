@@ -1,4 +1,4 @@
--- Enable extensions
+﻿-- Enable extensions
 create extension if not exists "uuid-ossp";
 create extension if not exists "pgcrypto";
 
@@ -179,6 +179,58 @@ create table if not exists public.care_plans (
   created_at timestamptz default now()
 );
 
+-- PRESCRIPTIONS
+create table if not exists public.prescriptions (
+  id uuid primary key default uuid_generate_v4(),
+  patient_id uuid references public.profiles(id) not null,
+  provider_id uuid references public.providers(id) not null,
+  medication_name text not null,
+  dosage text not null,
+  frequency text not null,
+  instructions text,
+  status text check (status in ('active', 'completed', 'cancelled')) default 'active',
+  refills_remaining integer default 0,
+  prescribed_at timestamptz default now(),
+  expires_at timestamptz,
+  created_at timestamptz default now()
+);
+
+alter table public.prescriptions add column if not exists patient_id uuid references public.profiles(id);
+alter table public.prescriptions add column if not exists provider_id uuid references public.providers(id);
+alter table public.prescriptions add column if not exists medication_name text;
+alter table public.prescriptions add column if not exists dosage text;
+alter table public.prescriptions add column if not exists frequency text;
+alter table public.prescriptions add column if not exists instructions text;
+alter table public.prescriptions add column if not exists status text;
+alter table public.prescriptions add column if not exists refills_remaining integer default 0;
+alter table public.prescriptions add column if not exists prescribed_at timestamptz default now();
+alter table public.prescriptions add column if not exists expires_at timestamptz;
+alter table public.prescriptions add column if not exists created_at timestamptz default now();
+
+-- LAB RESULTS
+create table if not exists public.lab_results (
+  id uuid primary key default uuid_generate_v4(),
+  patient_id uuid references public.profiles(id) not null,
+  provider_id uuid references public.providers(id) not null,
+  panel_name text not null,
+  status text check (status in ('ordered', 'collected', 'resulted', 'reviewed')) default 'ordered',
+  summary text,
+  markers jsonb default '[]'::jsonb,
+  ordered_at timestamptz default now(),
+  resulted_at timestamptz,
+  created_at timestamptz default now()
+);
+
+alter table public.lab_results add column if not exists patient_id uuid references public.profiles(id);
+alter table public.lab_results add column if not exists provider_id uuid references public.providers(id);
+alter table public.lab_results add column if not exists panel_name text;
+alter table public.lab_results add column if not exists status text;
+alter table public.lab_results add column if not exists summary text;
+alter table public.lab_results add column if not exists markers jsonb default '[]'::jsonb;
+alter table public.lab_results add column if not exists ordered_at timestamptz default now();
+alter table public.lab_results add column if not exists resulted_at timestamptz;
+alter table public.lab_results add column if not exists created_at timestamptz default now();
+
 -- EMPLOYERS
 create table if not exists public.employers (
   id uuid primary key default uuid_generate_v4(),
@@ -194,11 +246,12 @@ create table if not exists public.employers (
 create table if not exists public.invitations (
   id uuid primary key default uuid_generate_v4(),
   email text not null,
-  role text check (role in ('provider', 'employer_admin')),
+  role text check (role in ('provider', 'employer_admin', 'patient')),
   token text unique default encode(gen_random_bytes(32), 'hex'),
   accepted boolean default false,
   expires_at timestamptz default now() + interval '7 days',
-  created_at timestamptz default now()
+  created_at timestamptz default now(),
+  employer_id uuid references public.employers(id) on delete set null
 );
 
 -- NOTIFICATIONS
@@ -351,6 +404,8 @@ alter table public.providers enable row level security;
 alter table public.provider_availability enable row level security;
 alter table public.fertility_data enable row level security;
 alter table public.care_plans enable row level security;
+alter table public.prescriptions enable row level security;
+alter table public.lab_results enable row level security;
 alter table public.employers enable row level security;
 
 drop policy if exists "Users read own profile" on public.profiles;
@@ -368,10 +423,7 @@ create policy "users_read_own_profile" on public.profiles
   for select using (auth.uid() = id);
 create policy "users_update_own_profile" on public.profiles
   for update using (auth.uid() = id)
-  with check (
-    auth.uid() = id
-    and role = (select p.role from public.profiles p where p.id = auth.uid())
-  );
+  with check (auth.uid() = id);
 create policy "users_insert_own_profile" on public.profiles
   for insert with check (
     auth.uid() = id
@@ -379,21 +431,15 @@ create policy "users_insert_own_profile" on public.profiles
   );
 create policy "admins_read_all_profiles" on public.profiles
   for select using (
-    exists (
-      select 1 from public.profiles p
-      where p.id = auth.uid()
-        and p.role in ('clinic_admin', 'super_admin')
-    )
+    coalesce(auth.jwt()->'user_metadata'->>'role', '') in ('clinic_admin', 'super_admin')
   );
 create policy "admins_manage_profiles" on public.profiles
   for update using (
-    exists (
-      select 1 from public.profiles p
-      where p.id = auth.uid()
-        and p.role in ('clinic_admin', 'super_admin')
-    )
+    coalesce(auth.jwt()->'user_metadata'->>'role', '') in ('clinic_admin', 'super_admin')
   )
-  with check (true);
+  with check (
+    coalesce(auth.jwt()->'user_metadata'->>'role', '') in ('clinic_admin', 'super_admin')
+  );
 create policy "public_read_active_provider_profiles" on public.profiles
   for select using (
     exists (
@@ -613,6 +659,49 @@ create policy "users_update_own_notifications" on public.notifications
   for update using (recipient_id = auth.uid())
   with check (recipient_id = auth.uid());
 
+drop policy if exists "patients_read_own_prescriptions" on public.prescriptions;
+drop policy if exists "providers_manage_prescriptions" on public.prescriptions;
+create policy "patients_read_own_prescriptions" on public.prescriptions
+  for select using (patient_id = auth.uid());
+create policy "providers_manage_prescriptions" on public.prescriptions
+  for all using (
+    exists (
+      select 1 from public.providers p
+      where p.id = prescriptions.provider_id
+        and p.profile_id = auth.uid()
+    )
+  )
+  with check (
+    exists (
+      select 1 from public.providers p
+      where p.id = prescriptions.provider_id
+        and p.profile_id = auth.uid()
+    )
+  );
+
+drop policy if exists "patients_read_resulted_labs" on public.lab_results;
+drop policy if exists "providers_manage_labs" on public.lab_results;
+create policy "patients_read_resulted_labs" on public.lab_results
+  for select using (
+    patient_id = auth.uid()
+    and status in ('resulted', 'reviewed')
+  );
+create policy "providers_manage_labs" on public.lab_results
+  for all using (
+    exists (
+      select 1 from public.providers p
+      where p.id = lab_results.provider_id
+        and p.profile_id = auth.uid()
+    )
+  )
+  with check (
+    exists (
+      select 1 from public.providers p
+      where p.id = lab_results.provider_id
+        and p.profile_id = auth.uid()
+    )
+  );
+
 drop policy if exists "employer_admin_own_data" on public.employers;
 create policy "employer_admin_own_data" on public.employers
   for select using (
@@ -638,5 +727,61 @@ create policy "admins_manage_invitations" on public.invitations
       select 1 from public.profiles p
       where p.id = auth.uid()
         and p.role in ('clinic_admin', 'super_admin')
+    )
+  );
+
+-- PARTNER ACCESS
+create table if not exists public.partner_access (
+  id uuid primary key default uuid_generate_v4(),
+  patient_id uuid references public.profiles(id) not null,
+  partner_id uuid references public.profiles(id) not null,
+  access_level text check (access_level in ('view_appointments', 'view_pregnancy', 'view_fertility', 'full')) not null default 'view_appointments',
+  created_at timestamptz default now(),
+  revoked_at timestamptz
+);
+
+create table if not exists public.pregnancy_records (
+  id uuid primary key default uuid_generate_v4(),
+  patient_id uuid references public.profiles(id) not null,
+  partner_id uuid references public.profiles(id),
+  status text check (status in ('active', 'tracking', 'complete', 'loss')) default 'active',
+  current_week integer,
+  due_date date,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+
+alter table public.partner_access enable row level security;
+alter table public.pregnancy_records enable row level security;
+
+drop policy if exists "patients_manage_partner_access" on public.partner_access;
+create policy "patients_manage_partner_access" on public.partner_access
+  for all
+  using (patient_id = auth.uid())
+  with check (patient_id = auth.uid());
+
+drop policy if exists "partners_view_granted_access" on public.partner_access;
+create policy "partners_view_granted_access" on public.partner_access
+  for select
+  using (partner_id = auth.uid() or patient_id = auth.uid());
+
+drop policy if exists "patients_manage_own_pregnancy_records" on public.pregnancy_records;
+create policy "patients_manage_own_pregnancy_records" on public.pregnancy_records
+  for all
+  using (patient_id = auth.uid())
+  with check (patient_id = auth.uid());
+
+drop policy if exists "partners_read_shared_pregnancy_records" on public.pregnancy_records;
+create policy "partners_read_shared_pregnancy_records" on public.pregnancy_records
+  for select
+  using (
+    partner_id = auth.uid()
+    and exists (
+      select 1
+      from public.partner_access access_row
+      where access_row.patient_id = pregnancy_records.patient_id
+        and access_row.partner_id = auth.uid()
+        and access_row.revoked_at is null
+        and access_row.access_level in ('view_pregnancy', 'full')
     )
   );

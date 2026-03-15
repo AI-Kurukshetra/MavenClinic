@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, useTransition } from "react";
+import type { RealtimePostgresChangesPayload } from "@supabase/supabase-js";
 import { useRouter } from "next/navigation";
 import {
   FileText,
@@ -27,6 +28,18 @@ import type { ConsultationRoomData } from "@/lib/appointments-data";
 
 type Props = ConsultationRoomData & {
   currentUserId: string;
+};
+
+type ConsultationMessageRow = {
+  id: string;
+  sender_id: string | null;
+  content: string;
+  created_at: string | null;
+};
+
+type AppointmentRow = {
+  status: string | null;
+  notes: string | null;
 };
 
 type ToastState = {
@@ -102,19 +115,20 @@ export function ConsultationRoom({ appointment, provider, conversationId, messag
           table: "messages",
           filter: `conversation_id=eq.${conversationId}`,
         },
-        (payload) => {
+        (payload: RealtimePostgresChangesPayload<Record<string, unknown>>) => {
+          const row = payload.new as ConsultationMessageRow;
           setMessages((current) => {
-            if (current.some((message) => message.id === payload.new.id)) {
+            if (current.some((message) => message.id === row.id)) {
               return current;
             }
 
             return [
               ...current,
               {
-                id: String(payload.new.id),
-                sender: payload.new.sender_id === currentUserId ? "patient" : "provider",
-                content: String(payload.new.content),
-                createdAt: String(payload.new.created_at),
+                id: String(row.id),
+                sender: row.sender_id === currentUserId ? "patient" : "provider",
+                content: String(row.content),
+                createdAt: String(row.created_at),
               },
             ];
           });
@@ -132,14 +146,15 @@ export function ConsultationRoom({ appointment, provider, conversationId, messag
           table: "appointments",
           filter: `id=eq.${appointment.id}`,
         },
-        (payload) => {
-          if (payload.new.status === "completed" || payload.new.status === "cancelled") {
+        (payload: RealtimePostgresChangesPayload<Record<string, unknown>>) => {
+          const row = payload.new as AppointmentRow;
+          if (row.status === "completed" || row.status === "cancelled") {
             router.push("/appointments");
           }
 
-          if (typeof payload.new.notes === "string") {
-            setConsultationNotes(payload.new.notes);
-            setNotesSavedValue(payload.new.notes);
+          if (typeof row.notes === "string") {
+            setConsultationNotes(row.notes);
+            setNotesSavedValue(row.notes);
           }
         },
       )

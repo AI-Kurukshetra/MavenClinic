@@ -1,8 +1,10 @@
-import { CalendarRange, Clock3, MessageSquareReply, Users } from "lucide-react";
+import Link from "next/link";
+import { CalendarRange, ChevronRight, Clock3, MessageSquareReply, Users } from "lucide-react";
 import { DashboardShell } from "@/components/health/dashboard-shell";
 import { Card } from "@/components/ui/card";
 import { StatCard } from "@/components/ui/stat-card";
 import { getProviderDashboardData } from "@/lib/data";
+import { formatTime } from "@/lib/appointments";
 import { formatDateTime, formatRelativeTime } from "@/lib/utils";
 
 export default async function ProviderDashboardPage() {
@@ -43,16 +45,19 @@ export default async function ProviderDashboardPage() {
             {patients.length ? (
               <div className="space-y-3">
                 {patients.map((patient) => (
-                  <div key={patient.id} className="rounded-[24px] border border-[var(--border)] p-4">
+                  <Link key={patient.id} href={`/provider/patients/${patient.id}`} className="block cursor-pointer rounded-[24px] border border-[var(--border)] p-4 transition hover:bg-[var(--slate-50)]">
                     <div className="flex items-start justify-between gap-3">
                       <div>
                         <p className="font-semibold">{patient.name}</p>
                         <p className="text-sm text-[var(--foreground-muted)]">Last visit: {formatRelativeTime(patient.lastVisit)}</p>
                       </div>
-                      <p className="text-sm text-[var(--teal-700)]">{patient.carePlan}</p>
+                      <div className="flex items-center gap-3 text-sm text-[var(--teal-700)]">
+                        <p>{patient.carePlan}</p>
+                        <ChevronRight className="h-4 w-4 text-[var(--foreground-muted)]" />
+                      </div>
                     </div>
                     <p className="mt-3 text-sm text-[var(--foreground-muted)]">{patient.reason}</p>
-                  </div>
+                  </Link>
                 ))}
               </div>
             ) : (
@@ -70,7 +75,7 @@ export default async function ProviderDashboardPage() {
               {schedule.map((slot) => (
                 <div key={slot.id} className="rounded-[24px] border border-[var(--border)] bg-[var(--slate-50)] p-4">
                   <p className="font-semibold">{slot.dayOfWeek}</p>
-                  <p className="mt-1 text-sm text-[var(--foreground-muted)]">{slot.startTime} - {slot.endTime}</p>
+                  <p className="mt-1 text-sm text-[var(--foreground-muted)]">{formatTime(slot.startTime)} - {formatTime(slot.endTime)}</p>
                   <p className="mt-2 text-sm text-[var(--foreground-muted)]">{slot.location}</p>
                 </div>
               ))}

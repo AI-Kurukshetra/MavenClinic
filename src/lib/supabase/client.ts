@@ -1,13 +1,13 @@
-﻿import { createClient } from "@supabase/supabase-js";
-import { env } from "@/lib/env";
+import { createBrowserClient } from "@supabase/ssr";
+import { publicEnv } from "@/lib/env";
 
-let supabaseClient: ReturnType<typeof createClient> | undefined;
+let supabaseClient: ReturnType<typeof createBrowserClient> | undefined;
 
 export function getSupabaseBrowserClient() {
   if (!supabaseClient) {
-    supabaseClient = createClient(
-      env.NEXT_PUBLIC_SUPABASE_URL,
-      env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
+    supabaseClient = createBrowserClient(
+      publicEnv.NEXT_PUBLIC_SUPABASE_URL,
+      publicEnv.NEXT_PUBLIC_SUPABASE_ANON_KEY,
       {
         auth: {
           persistSession: true,
@@ -19,4 +19,3 @@ export function getSupabaseBrowserClient() {
 
   return supabaseClient;
 }
-

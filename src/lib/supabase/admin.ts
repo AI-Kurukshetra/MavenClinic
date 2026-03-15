@@ -1,5 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
-import { serverEnv } from "@/lib/env";
+import { publicEnv, serverEnv } from "@/lib/env";
 
 type AdminDatabase = {
   public: {
@@ -13,6 +13,7 @@ type AdminDatabase = {
           accepted: boolean | null;
           expires_at: string | null;
           created_at: string | null;
+          employer_id: string | null;
         };
         Insert: {
           id?: string;
@@ -22,6 +23,7 @@ type AdminDatabase = {
           accepted?: boolean | null;
           expires_at?: string | null;
           created_at?: string | null;
+          employer_id?: string | null;
         };
         Update: {
           id?: string;
@@ -31,6 +33,7 @@ type AdminDatabase = {
           accepted?: boolean | null;
           expires_at?: string | null;
           created_at?: string | null;
+          employer_id?: string | null;
         };
         Relationships: [];
       };
@@ -63,13 +66,16 @@ type AdminDatabase = {
           contract_end?: string | null;
         };
         Relationships: [];
-      };      appointments: {
+      };
+      appointments: {
         Row: {
           id: string;
           patient_id: string | null;
           provider_id: string | null;
           status: string | null;
           scheduled_at: string;
+          type: string | null;
+          created_at: string | null;
         };
         Insert: {
           id?: string;
@@ -77,6 +83,8 @@ type AdminDatabase = {
           provider_id?: string | null;
           status?: string | null;
           scheduled_at: string;
+          type?: string | null;
+          created_at?: string | null;
         };
         Update: {
           id?: string;
@@ -84,6 +92,8 @@ type AdminDatabase = {
           provider_id?: string | null;
           status?: string | null;
           scheduled_at?: string;
+          type?: string | null;
+          created_at?: string | null;
         };
         Relationships: [];
       };
@@ -91,17 +101,65 @@ type AdminDatabase = {
         Row: {
           id: string;
           patient_id: string | null;
+          provider_id: string | null;
+          title: string;
+          description: string | null;
+          milestones: unknown;
           status: string | null;
+          created_at: string | null;
         };
         Insert: {
           id?: string;
           patient_id?: string | null;
+          provider_id?: string | null;
+          title?: string;
+          description?: string | null;
+          milestones?: unknown;
           status?: string | null;
+          created_at?: string | null;
         };
         Update: {
           id?: string;
           patient_id?: string | null;
+          provider_id?: string | null;
+          title?: string;
+          description?: string | null;
+          milestones?: unknown;
           status?: string | null;
+          created_at?: string | null;
+        };
+        Relationships: [];
+      };
+      educational_content: {
+        Row: {
+          id: string;
+          title: string;
+          content: string | null;
+          category: string | null;
+          life_stage: string | null;
+          published: boolean | null;
+          author_id: string | null;
+          created_at: string | null;
+        };
+        Insert: {
+          id?: string;
+          title: string;
+          content?: string | null;
+          category?: string | null;
+          life_stage?: string | null;
+          published?: boolean | null;
+          author_id?: string | null;
+          created_at?: string | null;
+        };
+        Update: {
+          id?: string;
+          title?: string;
+          content?: string | null;
+          category?: string | null;
+          life_stage?: string | null;
+          published?: boolean | null;
+          author_id?: string | null;
+          created_at?: string | null;
         };
         Relationships: [];
       };
@@ -129,27 +187,43 @@ type AdminDatabase = {
       notifications: {
         Row: {
           id: string;
+          recipient_id: string | null;
+          actor_id: string | null;
+          appointment_id: string | null;
           type: string | null;
           title: string;
+          body: string | null;
+          link: string | null;
+          read_at: string | null;
           created_at: string | null;
-          actor_id: string | null;
         };
         Insert: {
           id?: string;
+          recipient_id?: string | null;
+          actor_id?: string | null;
+          appointment_id?: string | null;
           type?: string | null;
           title: string;
+          body?: string | null;
+          link?: string | null;
+          read_at?: string | null;
           created_at?: string | null;
-          actor_id?: string | null;
         };
         Update: {
           id?: string;
+          recipient_id?: string | null;
+          actor_id?: string | null;
+          appointment_id?: string | null;
           type?: string | null;
           title?: string;
+          body?: string | null;
+          link?: string | null;
+          read_at?: string | null;
           created_at?: string | null;
-          actor_id?: string | null;
         };
         Relationships: [];
-      };      messages: {
+      };
+      messages: {
         Row: {
           id: string;
           conversation_id: string;
@@ -176,6 +250,66 @@ type AdminDatabase = {
           message_type?: string | null;
           read_at?: string | null;
           created_at?: string | null;
+        };
+        Relationships: [];
+      };
+      partner_access: {
+        Row: {
+          id: string;
+          patient_id: string;
+          partner_id: string;
+          access_level: string;
+          created_at: string | null;
+          revoked_at: string | null;
+        };
+        Insert: {
+          id?: string;
+          patient_id: string;
+          partner_id: string;
+          access_level: string;
+          created_at?: string | null;
+          revoked_at?: string | null;
+        };
+        Update: {
+          id?: string;
+          patient_id?: string;
+          partner_id?: string;
+          access_level?: string;
+          created_at?: string | null;
+          revoked_at?: string | null;
+        };
+        Relationships: [];
+      };
+      pregnancy_records: {
+        Row: {
+          id: string;
+          patient_id: string;
+          partner_id: string | null;
+          status: string | null;
+          current_week: number | null;
+          due_date: string | null;
+          created_at: string | null;
+          updated_at: string | null;
+        };
+        Insert: {
+          id?: string;
+          patient_id: string;
+          partner_id?: string | null;
+          status?: string | null;
+          current_week?: number | null;
+          due_date?: string | null;
+          created_at?: string | null;
+          updated_at?: string | null;
+        };
+        Update: {
+          id?: string;
+          patient_id?: string;
+          partner_id?: string | null;
+          status?: string | null;
+          current_week?: number | null;
+          due_date?: string | null;
+          created_at?: string | null;
+          updated_at?: string | null;
         };
         Relationships: [];
       };
@@ -212,6 +346,33 @@ type AdminDatabase = {
           onboarding_complete?: boolean | null;
           employer_id?: string | null;
           created_at?: string | null;
+        };
+        Relationships: [];
+      };
+      provider_availability: {
+        Row: {
+          id: string;
+          provider_id: string;
+          day_of_week: string | number;
+          start_time: string;
+          end_time: string;
+          location: string | null;
+        };
+        Insert: {
+          id?: string;
+          provider_id: string;
+          day_of_week: string | number;
+          start_time: string;
+          end_time: string;
+          location?: string | null;
+        };
+        Update: {
+          id?: string;
+          provider_id?: string;
+          day_of_week?: string | number;
+          start_time?: string;
+          end_time?: string;
+          location?: string | null;
         };
         Relationships: [];
       };
@@ -254,6 +415,120 @@ type AdminDatabase = {
         };
         Relationships: [];
       };
+      prescriptions: {
+        Row: {
+          id: string;
+          patient_id: string | null;
+          provider_id: string | null;
+          medication_name: string;
+          dosage: string;
+          frequency: string;
+          instructions: string | null;
+          status: string | null;
+          refills_remaining: number | null;
+          prescribed_at: string | null;
+          expires_at: string | null;
+          created_at: string | null;
+        };
+        Insert: {
+          id?: string;
+          patient_id?: string | null;
+          provider_id?: string | null;
+          medication_name: string;
+          dosage: string;
+          frequency: string;
+          instructions?: string | null;
+          status?: string | null;
+          refills_remaining?: number | null;
+          prescribed_at?: string | null;
+          expires_at?: string | null;
+          created_at?: string | null;
+        };
+        Update: {
+          id?: string;
+          patient_id?: string | null;
+          provider_id?: string | null;
+          medication_name?: string;
+          dosage?: string;
+          frequency?: string;
+          instructions?: string | null;
+          status?: string | null;
+          refills_remaining?: number | null;
+          prescribed_at?: string | null;
+          expires_at?: string | null;
+          created_at?: string | null;
+        };
+        Relationships: [];
+      };
+      lab_results: {
+        Row: {
+          id: string;
+          patient_id: string | null;
+          provider_id: string | null;
+          panel_name: string;
+          status: string | null;
+          summary: string | null;
+          markers: unknown;
+          ordered_at: string | null;
+          resulted_at: string | null;
+          created_at: string | null;
+        };
+        Insert: {
+          id?: string;
+          patient_id?: string | null;
+          provider_id?: string | null;
+          panel_name: string;
+          status?: string | null;
+          summary?: string | null;
+          markers?: unknown;
+          ordered_at?: string | null;
+          resulted_at?: string | null;
+          created_at?: string | null;
+        };
+        Update: {
+          id?: string;
+          patient_id?: string | null;
+          provider_id?: string | null;
+          panel_name?: string;
+          status?: string | null;
+          summary?: string | null;
+          markers?: unknown;
+          ordered_at?: string | null;
+          resulted_at?: string | null;
+          created_at?: string | null;
+        };
+        Relationships: [];
+      };
+      support_groups: {
+        Row: {
+          id: string;
+          name: string;
+          description: string | null;
+          category: string | null;
+          moderator_id: string | null;
+          active: boolean | null;
+          created_at: string | null;
+        };
+        Insert: {
+          id?: string;
+          name: string;
+          description?: string | null;
+          category?: string | null;
+          moderator_id?: string | null;
+          active?: boolean | null;
+          created_at?: string | null;
+        };
+        Update: {
+          id?: string;
+          name?: string;
+          description?: string | null;
+          category?: string | null;
+          moderator_id?: string | null;
+          active?: boolean | null;
+          created_at?: string | null;
+        };
+        Relationships: [];
+      };
     };
     Views: Record<string, never>;
     Functions: Record<string, never>;
@@ -270,7 +545,7 @@ export function getSupabaseAdminClient() {
   }
 
   if (!adminClient) {
-    adminClient = createClient<AdminDatabase>(serverEnv.NEXT_PUBLIC_SUPABASE_URL, serverEnv.SUPABASE_SERVICE_ROLE_KEY, {
+    adminClient = createClient<AdminDatabase>(publicEnv.NEXT_PUBLIC_SUPABASE_URL, serverEnv.SUPABASE_SERVICE_ROLE_KEY, {
       auth: {
         autoRefreshToken: false,
         persistSession: false,

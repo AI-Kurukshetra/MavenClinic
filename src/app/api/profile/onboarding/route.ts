@@ -1,20 +1,23 @@
-import { onboardingSchema } from "@/lib/onboarding";
-import { requireApiUser } from "@/lib/api-auth";
+﻿import { onboardingSchema } from "@/lib/onboarding";
 import { apiError, apiSuccess } from "@/lib/api-response";
 import { sanitizeNullableText, sanitizeText } from "@/lib/sanitize";
+import { getSupabaseAdminClient } from "@/lib/supabase/admin";
+import { getSupabaseServerClient } from "@/lib/supabase/server";
+
+function isMissingColumnError(error: { message?: string } | null) {
+  return Boolean(error?.message?.includes("Could not find the '") && error?.message?.includes("column"));
+}
 
 export async function POST(request: Request) {
   try {
-    const authResult = await requireApiUser();
+    const supabase = await getSupabaseServerClient();
+    const {
+      data: { user },
+      error: userError,
+    } = await supabase.auth.getUser();
 
-    if ("error" in authResult) {
-      return authResult.error;
-    }
-
-    const { user, supabase, profile } = authResult.context;
-
-    if (profile?.role && profile.role !== "patient") {
-      return apiError(403, "forbidden", "Forbidden");
+    if (userError || !user) {
+      return apiError(401, "unauthorized", "Unauthorized");
     }
 
     const body = await request.json();
@@ -34,8 +37,8 @@ export async function POST(request: Request) {
     }
 
     const data = parsed.data;
-
-    const { error: profileError } = await supabase.from("profiles").upsert({
+    const admin = getSupabaseAdminClient();
+    const fullPayload = {
       id: user.id,
       full_name: data.fullName,
       date_of_birth: data.dateOfBirth,
@@ -50,12 +53,34 @@ export async function POST(request: Request) {
       preferred_language: sanitizeNullableText(data.preferredLanguage),
       provider_gender_preference: sanitizeNullableText(data.genderPreference),
       onboarding_complete: true,
-      role: profile?.role ?? "patient",
-    });
+      role: "patient",
+    };
+
+    let profileError = (await admin.from("profiles").upsert(fullPayload)).error;
+
+    if (profileError && isMissingColumnError(profileError)) {
+      profileError = (
+        await admin.from("profiles").upsert({
+          id: user.id,
+          full_name: data.fullName,
+          date_of_birth: data.dateOfBirth,
+          onboarding_complete: true,
+          role: "patient",
+        })
+      ).error;
+    }
 
     if (profileError) {
       return apiError(500, "profile_update_failed", "Unable to save onboarding details.");
     }
+
+    await admin.auth.admin.updateUserById(user.id, {
+      user_metadata: {
+        ...(user.user_metadata ?? {}),
+        full_name: data.fullName,
+        onboardingComplete: true,
+      },
+    });
 
     return apiSuccess({ ok: true });
   } catch {
