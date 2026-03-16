@@ -1,4 +1,4 @@
-﻿import { getCurrentProfile, getCurrentUser } from "@/lib/auth";
+import { getCurrentProfile, getCurrentUser } from "@/lib/auth";
 import { type PatientReferralsPageData, type ProviderReferralListItem, type ProviderReferralsPageData, type ReferralPayload, formatReferralSpecialty } from "@/lib/referral-shared";
 import { getSupabaseAdminClient } from "@/lib/supabase/admin";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
@@ -16,6 +16,14 @@ type ReferralRow = {
   created_at: string | null;
 };
 
+type ProviderRow = {
+  id: string;
+  profile_id: string | null;
+  specialty: string;
+  accepting_patients: boolean | null;
+  suspended: boolean | null;
+};
+
 function getAdminClientSafe() {
   try {
     return getSupabaseAdminClient();
@@ -28,16 +36,8 @@ function getAdminClientSafe() {
 const referralSelect = "id, patient_id, referring_provider_id, referred_to_provider_id, referred_to_specialty, reason, urgency, status, clinical_notes, created_at";
 const legacyReferralSelect = "id, patient_id, referring_provider_id, referred_to_provider_id, referred_to_specialty, reason, urgency, status, created_at";
 
-async function fetchReferralRows(
-  client: any,
-  column: "patient_id" | "referring_provider_id",
-  value: string,
-) {
-  const primary = await client
-    .from("referrals")
-    .select(referralSelect)
-    .eq(column, value)
-    .order("created_at", { ascending: false });
+async function fetchReferralRows(client: any, column: "patient_id" | "referring_provider_id", value: string) {
+  const primary = await client.from("referrals").select(referralSelect).eq(column, value).order("created_at", { ascending: false });
 
   if (!primary.error) {
     return {
@@ -55,11 +55,7 @@ async function fetchReferralRows(
 
   console.warn("Referrals legacy schema fallback:", primary.error.message);
 
-  const fallback = await client
-    .from("referrals")
-    .select(legacyReferralSelect)
-    .eq(column, value)
-    .order("created_at", { ascending: false });
+  const fallback = await client.from("referrals").select(legacyReferralSelect).eq(column, value).order("created_at", { ascending: false });
 
   return {
     data: ((fallback.data ?? []) as Array<Omit<ReferralRow, "clinical_notes">>).map((row) => ({
@@ -69,13 +65,6 @@ async function fetchReferralRows(
     error: fallback.error,
   };
 }
-type ProviderRow = {
-  id: string;
-  profile_id: string | null;
-  specialty: string;
-  accepting_patients: boolean | null;
-  suspended: boolean | null;
-};
 
 function coerceReferralStatus(value: string | null): ProviderReferralListItem["status"] {
   if (value === "accepted" || value === "completed" || value === "cancelled") {
@@ -99,24 +88,24 @@ async function getProviderContext() {
     throw new Error("Authenticated provider required.");
   }
 
+  const admin = getAdminClientSafe();
   const supabase = await getSupabaseServerClient();
-  const { data, error } = await supabase
-    .from("providers")
-    .select("id")
-    .eq("profile_id", user.id)
-    .maybeSingle();
+  const result = admin
+    ? await admin.from("providers").select("id").eq("profile_id", user.id).maybeSingle()
+    : await supabase.from("providers").select("id").eq("profile_id", user.id).maybeSingle();
 
-  if (error) {
-    return { referrals: [] };
+  if (result.error) {
+    console.error("Provider referrals context failed:", result.error.message);
+    throw new Error(result.error.message);
   }
 
-  if (!data?.id) {
+  if (!result.data?.id) {
     throw new Error("Provider record not found.");
   }
 
   return {
     userId: user.id,
-    providerId: data.id as string,
+    providerId: result.data.id as string,
     providerName: profile?.full_name ?? user.user_metadata?.full_name ?? "Maven provider",
   };
 }
@@ -146,81 +135,78 @@ function mapReferralRow(
 }
 
 export async function getProviderReferralsPageData(): Promise<ProviderReferralsPageData> {
-  const { providerId, providerName } = await getProviderContext();
-  const admin = getSupabaseAdminClient();
+  try {
+    const { providerId, providerName } = await getProviderContext();
+    const admin = getAdminClientSafe() ?? await getSupabaseServerClient();
 
-  const [referralsResult, appointmentsResult, providersResult] = await Promise.all([
-    fetchReferralRows(admin, "referring_provider_id", String(providerId)),
-    admin
-      .from("appointments")
-      .select("patient_id, scheduled_at")
-      .eq("provider_id", String(providerId))
-      .order("scheduled_at", { ascending: false }),
-    admin
-      .from("providers")
-      .select("id, profile_id, specialty, accepting_patients, suspended")
-      .eq("accepting_patients", true),
-  ]);
+    const [referralsResult, appointmentsResult, providersResult] = await Promise.all([
+      fetchReferralRows(admin, "referring_provider_id", String(providerId)),
+      admin.from("appointments").select("patient_id, scheduled_at").eq("provider_id", String(providerId)).order("scheduled_at", { ascending: false }),
+      admin.from("providers").select("id, profile_id, specialty, accepting_patients, suspended").eq("accepting_patients", true),
+    ]);
 
-  if (referralsResult.error) {
-    throw new Error(referralsResult.error.message);
-  }
-  if (appointmentsResult.error) {
-    throw new Error(appointmentsResult.error.message);
-  }
-  if (providersResult.error) {
-    throw new Error(providersResult.error.message);
-  }
-
-  const referralRows = (referralsResult.data ?? []) as ReferralRow[];
-  const appointmentRows = (appointmentsResult.data ?? []) as Array<{ patient_id: string | null; scheduled_at: string }>;
-  const providerRows = ((providersResult.data ?? []) as ProviderRow[]).filter((provider) => !provider.suspended);
-
-  const patientIds = Array.from(new Set([
-    ...referralRows.map((row) => row.patient_id).filter((value): value is string => Boolean(value)),
-    ...appointmentRows.map((row) => row.patient_id).filter((value): value is string => Boolean(value)),
-  ]));
-  const providerProfileIds = Array.from(new Set(providerRows.map((provider) => provider.profile_id).filter((value): value is string => Boolean(value))));
-
-  const [patientProfilesResult, providerProfilesResult] = await Promise.all([
-    patientIds.length ? admin.from("profiles").select("id, full_name, avatar_url").in("id", patientIds) : Promise.resolve({ data: [], error: null }),
-    providerProfileIds.length ? admin.from("profiles").select("id, full_name").in("id", providerProfileIds) : Promise.resolve({ data: [], error: null }),
-  ]);
-
-  if (patientProfilesResult.error) {
-    throw new Error(patientProfilesResult.error.message);
-  }
-  if (providerProfilesResult.error) {
-    throw new Error(providerProfilesResult.error.message);
-  }
-
-  const patientMap = new Map((patientProfilesResult.data ?? []).map((profile) => [profile.id, { name: profile.full_name ?? "Patient", avatarUrl: profile.avatar_url ?? null }]));
-  const providerProfileMap = new Map((providerProfilesResult.data ?? []).map((profile) => [profile.id, profile.full_name ?? "Maven provider"]));
-  const providerMap = new Map(providerRows.map((provider) => [provider.id, { name: provider.profile_id ? providerProfileMap.get(provider.profile_id) ?? "Maven provider" : "Maven provider", specialty: formatReferralSpecialty(provider.specialty) }]));
-
-  const lastVisitByPatient = new Map<string, string>();
-  for (const row of appointmentRows) {
-    if (row.patient_id && !lastVisitByPatient.has(row.patient_id)) {
-      lastVisitByPatient.set(row.patient_id, row.scheduled_at);
+    if (referralsResult.error || appointmentsResult.error || providersResult.error) {
+      console.error("Provider referrals lookup failed:", {
+        referrals: referralsResult.error?.message,
+        appointments: appointmentsResult.error?.message,
+        providers: providersResult.error?.message,
+      });
+      return { providerName, referrals: [], patients: [], providers: [] };
     }
-  }
 
-  return {
-    providerName,
-    referrals: referralRows.map((row) => mapReferralRow(row, patientMap, providerMap)),
-    patients: patientIds.map((patientId) => ({
-      id: patientId,
-      name: patientMap.get(patientId)?.name ?? "Patient",
-      avatarUrl: patientMap.get(patientId)?.avatarUrl ?? null,
-      lastVisit: lastVisitByPatient.get(patientId) ?? new Date().toISOString(),
-    })),
-    providers: providerRows.map((provider) => ({
-      id: provider.id,
-      name: provider.profile_id ? providerProfileMap.get(provider.profile_id) ?? "Maven provider" : "Maven provider",
-      specialty: formatReferralSpecialty(provider.specialty),
-      specialtyKey: provider.specialty,
-    })),
-  };
+    const referralRows = (referralsResult.data ?? []) as ReferralRow[];
+    const appointmentRows = (appointmentsResult.data ?? []) as Array<{ patient_id: string | null; scheduled_at: string }>;
+    const providerRows = ((providersResult.data ?? []) as ProviderRow[]).filter((provider) => !provider.suspended);
+
+    const patientIds = Array.from(new Set([
+      ...referralRows.map((row) => row.patient_id).filter((value): value is string => Boolean(value)),
+      ...appointmentRows.map((row) => row.patient_id).filter((value): value is string => Boolean(value)),
+    ]));
+    const providerProfileIds = Array.from(new Set(providerRows.map((provider) => provider.profile_id).filter((value): value is string => Boolean(value))));
+
+    const [patientProfilesResult, providerProfilesResult] = await Promise.all([
+      patientIds.length ? admin.from("profiles").select("id, full_name, avatar_url").in("id", patientIds) : Promise.resolve({ data: [], error: null }),
+      providerProfileIds.length ? admin.from("profiles").select("id, full_name").in("id", providerProfileIds) : Promise.resolve({ data: [], error: null }),
+    ]);
+
+    if (patientProfilesResult.error) {
+      console.error("Provider referrals patient profiles failed:", patientProfilesResult.error.message);
+    }
+    if (providerProfilesResult.error) {
+      console.error("Provider referrals provider profiles failed:", providerProfilesResult.error.message);
+    }
+
+    const patientMap = new Map((patientProfilesResult.data ?? []).map((profile) => [profile.id, { name: profile.full_name ?? "Patient", avatarUrl: profile.avatar_url ?? null }]));
+    const providerProfileMap = new Map((providerProfilesResult.data ?? []).map((profile) => [profile.id, profile.full_name ?? "Maven provider"]));
+    const providerMap = new Map(providerRows.map((provider) => [provider.id, { name: provider.profile_id ? providerProfileMap.get(provider.profile_id) ?? "Maven provider" : "Maven provider", specialty: formatReferralSpecialty(provider.specialty) }]));
+
+    const lastVisitByPatient = new Map<string, string>();
+    for (const row of appointmentRows) {
+      if (row.patient_id && !lastVisitByPatient.has(row.patient_id)) {
+        lastVisitByPatient.set(row.patient_id, row.scheduled_at);
+      }
+    }
+
+    return {
+      providerName,
+      referrals: referralRows.map((row) => mapReferralRow(row, patientMap, providerMap)),
+      patients: patientIds.map((patientId) => ({
+        id: patientId,
+        name: patientMap.get(patientId)?.name ?? "Patient",
+        avatarUrl: patientMap.get(patientId)?.avatarUrl ?? null,
+        lastVisit: lastVisitByPatient.get(patientId) ?? new Date().toISOString(),
+      })),
+      providers: providerRows.map((provider) => ({
+        id: provider.id,
+        name: provider.profile_id ? providerProfileMap.get(provider.profile_id) ?? "Maven provider" : "Maven provider",
+        specialty: formatReferralSpecialty(provider.specialty),
+        specialtyKey: provider.specialty,
+      })),
+    };
+  } catch (error) {
+    console.error("Provider referrals data error:", error instanceof Error ? error.message : String(error));
+    return { providerName: "Maven provider", referrals: [], patients: [], providers: [] };
+  }
 }
 
 export async function getPatientReferralsPageData(): Promise<PatientReferralsPageData> {
@@ -239,6 +225,7 @@ export async function getPatientReferralsPageData(): Promise<PatientReferralsPag
     console.error("Patient referrals lookup failed:", error.message);
     return { referrals: [] };
   }
+
   const providerIds = Array.from(new Set(referralRows.flatMap((row) => [row.referring_provider_id, row.referred_to_provider_id]).filter((value): value is string => Boolean(value))));
   const providersResult = providerIds.length && admin
     ? await admin.from("providers").select("id, profile_id, specialty").in("id", providerIds)
@@ -328,29 +315,34 @@ export async function createReferral(payload: ReferralPayload) {
     clinical_notes: payload.clinicalNotes ?? null,
   };
 
-  const { data: referral, error } = await admin
-    .from("referrals")
-    .insert(insertPayload)
-    .select("id, patient_id, referring_provider_id, referred_to_provider_id, referred_to_specialty, reason, urgency, status, clinical_notes, created_at")
-    .single();
+  const primaryInsert = await admin.from("referrals").insert(insertPayload).select(referralSelect).single();
+  const referralResult = !primaryInsert.error
+    ? primaryInsert
+    : primaryInsert.error.message.includes("clinical_notes")
+      ? await admin.from("referrals").insert({ ...insertPayload, clinical_notes: undefined }).select(legacyReferralSelect).single()
+      : primaryInsert;
 
-  if (error) {
-    throw new Error(error.message);
+  if (referralResult.error) {
+    throw new Error(referralResult.error.message);
   }
+
+  const referral = {
+    ...(referralResult.data as Record<string, unknown>),
+    clinical_notes: "clinical_notes" in (referralResult.data as Record<string, unknown>) ? (referralResult.data as Record<string, unknown>).clinical_notes ?? null : null,
+  } as ReferralRow;
 
   await admin.from("notifications").insert({
     recipient_id: payload.patientId,
     actor_id: String(userId),
     type: "referral_created",
-    title: `New referral from Dr. ${providerName}`,
-    body: `You have been referred to a ${formatReferralSpecialty(payload.referredToSpecialty)} specialist.`,
+    title: "New referral from Dr. " + providerName,
+    body: "You have been referred to a " + formatReferralSpecialty(payload.referredToSpecialty) + " specialist.",
     link: "/referrals",
   });
 
-  const [patientProfileResult, providerRowsResult, providerProfilesResult] = await Promise.all([
+  const [patientProfileResult, providerRowsResult] = await Promise.all([
     admin.from("profiles").select("id, full_name, avatar_url").eq("id", payload.patientId).maybeSingle(),
     admin.from("providers").select("id, profile_id, specialty").in("id", [String(providerId), ...(payload.referredToProviderId ? [payload.referredToProviderId] : [])]),
-    admin.from("profiles").select("id, full_name").in("id", [String(userId)]),
   ]);
 
   if (patientProfileResult.error) {
@@ -359,15 +351,10 @@ export async function createReferral(payload: ReferralPayload) {
   if (providerRowsResult.error) {
     throw new Error(providerRowsResult.error.message);
   }
-  if (providerProfilesResult.error) {
-    throw new Error(providerProfilesResult.error.message);
-  }
 
   const providerRows = (providerRowsResult.data ?? []) as Array<{ id: string; profile_id: string | null; specialty: string }>;
   const extraProfileIds = providerRows.map((row) => row.profile_id).filter((value): value is string => Boolean(value));
-  const extraProfilesResult = extraProfileIds.length
-    ? await admin.from("profiles").select("id, full_name").in("id", extraProfileIds)
-    : { data: [], error: null };
+  const extraProfilesResult = extraProfileIds.length ? await admin.from("profiles").select("id, full_name").in("id", extraProfileIds) : { data: [], error: null };
 
   if (extraProfilesResult.error) {
     throw new Error(extraProfilesResult.error.message);
@@ -383,15 +370,5 @@ export async function createReferral(payload: ReferralPayload) {
   const providerProfileMap = new Map((extraProfilesResult.data ?? []).map((profile) => [profile.id, profile.full_name ?? "Maven provider"]));
   const providerMap = new Map(providerRows.map((provider) => [provider.id, { name: provider.profile_id ? providerProfileMap.get(provider.profile_id) ?? "Maven provider" : "Maven provider", specialty: formatReferralSpecialty(provider.specialty) }]));
 
-  return mapReferralRow(referral as ReferralRow, patientMap, providerMap);
+  return mapReferralRow(referral, patientMap, providerMap);
 }
-
-
-
-
-
-
-
-
-
-

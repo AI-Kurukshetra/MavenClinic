@@ -85,24 +85,24 @@ async function getProviderContext(userId?: string): Promise<ProviderContext> {
     throw new Error("Authenticated provider required.");
   }
 
+  const admin = getAdminClientSafe();
   const supabase = await getSupabaseServerClient();
-  const { data, error } = await supabase
-    .from("providers")
-    .select("id, profile_id")
-    .eq("profile_id", user.id)
-    .maybeSingle();
+  const result = admin
+    ? await admin.from("providers").select("id, profile_id").eq("profile_id", user.id).maybeSingle()
+    : await supabase.from("providers").select("id, profile_id").eq("profile_id", user.id).maybeSingle();
 
-  if (error) {
-    throw new Error(error.message);
+  if (result.error) {
+    console.error("Provider messaging context failed:", result.error.message);
+    throw new Error(result.error.message);
   }
 
-  if (!data?.profile_id) {
+  if (!result.data?.profile_id) {
     throw new Error("Provider record not found.");
   }
 
   return {
-    userId: data.profile_id,
-    providerId: data.id,
+    userId: result.data.profile_id,
+    providerId: result.data.id,
   };
 }
 
@@ -405,23 +405,36 @@ export async function getPatientMessagingPageData(): Promise<MessagingPageData> 
 }
 
 export async function getProviderMessagingPageData(): Promise<MessagingPageData> {
-  const { userId } = await getProviderContext();
-  const [conversations, candidates] = await Promise.all([
-    buildConversationList("provider", userId),
-    getProviderConversationCandidates(userId),
-  ]);
-  const initialConversationId = conversations[0]?.id ?? null;
-  const initialThread = initialConversationId ? await getConversationThreadForUser(initialConversationId, "provider", userId) : null;
+  try {
+    const { userId } = await getProviderContext();
+    const [conversations, candidates] = await Promise.all([
+      buildConversationList("provider", userId),
+      getProviderConversationCandidates(userId),
+    ]);
+    const initialConversationId = conversations[0]?.id ?? null;
+    const initialThread = initialConversationId ? await getConversationThreadForUser(initialConversationId, "provider", userId) : null;
 
-  return {
-    currentUserId: userId,
-    role: "provider",
-    conversations,
-    initialConversationId,
-    initialThread,
-    candidates,
-    storageBucket: MESSAGE_ATTACHMENT_BUCKET,
-  };
+    return {
+      currentUserId: userId,
+      role: "provider",
+      conversations,
+      initialConversationId,
+      initialThread,
+      candidates,
+      storageBucket: MESSAGE_ATTACHMENT_BUCKET,
+    };
+  } catch (error) {
+    console.error("Provider messaging page data error:", error instanceof Error ? error.message : String(error));
+    return {
+      currentUserId: "",
+      role: "provider",
+      conversations: [],
+      initialConversationId: null,
+      initialThread: null,
+      candidates: [],
+      storageBucket: MESSAGE_ATTACHMENT_BUCKET,
+    };
+  }
 }
 
 export async function createConversationForCurrentUser(payload: CreateConversationInput) {

@@ -1139,107 +1139,133 @@ export async function getRecordsData() {
   }
 }
 export async function getProviderPrescriptionsData() {
-  const { providerId } = await getCurrentProviderRecord();
-  const supabase = await getSupabaseServerClient();
-  const [prescriptionsResult, patientsResult] = await Promise.all([
-    supabase
-      .from("prescriptions")
-      .select("id, patient_id, medication_name, dosage, frequency, instructions, status, refills_remaining, prescribed_at, expires_at")
-      .eq("provider_id", providerId)
-      .order("prescribed_at", { ascending: false }),
-    supabase
-      .from("appointments")
-      .select("patient_id")
-      .eq("provider_id", providerId),
-  ]);
+  try {
+    const { providerId } = await getCurrentProviderRecord();
+    const supabase = await getSupabaseServerClient();
+    const admin = (() => {
+      try {
+        return getSupabaseAdminClient();
+      } catch {
+        return null;
+      }
+    })();
+    const dataClient = admin ?? supabase;
+    const [prescriptionsResult, patientsResult] = await Promise.all([
+      dataClient
+        .from("prescriptions")
+        .select("id, patient_id, medication_name, dosage, frequency, instructions, status, refills_remaining, prescribed_at, expires_at")
+        .eq("provider_id", providerId)
+        .order("prescribed_at", { ascending: false }),
+      dataClient
+        .from("appointments")
+        .select("patient_id")
+        .eq("provider_id", providerId),
+    ]);
 
-  if (prescriptionsResult.error) {
-    throw new Error(prescriptionsResult.error.message);
+    if (prescriptionsResult.error || patientsResult.error) {
+      console.error("Provider prescriptions lookup failed:", {
+        prescriptions: prescriptionsResult.error?.message,
+        patients: patientsResult.error?.message,
+      });
+      return { prescriptions: [], patients: [] };
+    }
+
+    const patientIds = Array.from(new Set((patientsResult.data ?? []).map((item) => item.patient_id).filter(Boolean) as string[]));
+    const patientNameMap = await getProfileNameMap(patientIds);
+    const patients = patientIds.map((id) => ({ id, name: patientNameMap.get(id) ?? "Patient" }));
+    const prescriptions: Prescription[] = ((prescriptionsResult.data ?? []) as Array<{
+      id: string;
+      patient_id: string | null;
+      medication_name: string;
+      dosage: string;
+      frequency: string;
+      instructions: string | null;
+      status: string | null;
+      refills_remaining: number | null;
+      prescribed_at: string | null;
+      expires_at: string | null;
+    }>).map((item) => ({
+      id: item.id,
+      medicationName: item.medication_name,
+      dosage: item.dosage,
+      frequency: item.frequency,
+      instructions: item.instructions ?? "Take as directed.",
+      status: (item.status ?? "active") as Prescription["status"],
+      prescribedAt: item.prescribed_at ?? new Date().toISOString(),
+      expiresAt: item.expires_at,
+      refillsRemaining: item.refills_remaining ?? 0,
+      providerName: "You",
+      patientName: item.patient_id ? patientNameMap.get(item.patient_id) ?? "Patient" : "Patient",
+    }));
+
+    return { prescriptions, patients };
+  } catch (error) {
+    console.error("Provider prescriptions data error:", error instanceof Error ? error.message : String(error));
+    return { prescriptions: [], patients: [] };
   }
-
-  if (patientsResult.error) {
-    throw new Error(patientsResult.error.message);
-  }
-
-  const patientIds = Array.from(new Set((patientsResult.data ?? []).map((item) => item.patient_id).filter(Boolean) as string[]));
-  const patientNameMap = await getProfileNameMap(patientIds);
-  const patients = patientIds.map((id) => ({ id, name: patientNameMap.get(id) ?? "Patient" }));
-  const prescriptions: Prescription[] = ((prescriptionsResult.data ?? []) as Array<{
-    id: string;
-    patient_id: string | null;
-    medication_name: string;
-    dosage: string;
-    frequency: string;
-    instructions: string | null;
-    status: string | null;
-    refills_remaining: number | null;
-    prescribed_at: string | null;
-    expires_at: string | null;
-  }>).map((item) => ({
-    id: item.id,
-    medicationName: item.medication_name,
-    dosage: item.dosage,
-    frequency: item.frequency,
-    instructions: item.instructions ?? "Take as directed.",
-    status: (item.status ?? "active") as Prescription["status"],
-    prescribedAt: item.prescribed_at ?? new Date().toISOString(),
-    expiresAt: item.expires_at,
-    refillsRemaining: item.refills_remaining ?? 0,
-    providerName: "You",
-    patientName: item.patient_id ? patientNameMap.get(item.patient_id) ?? "Patient" : "Patient",
-  }));
-
-  return { prescriptions, patients };
 }
 
 export async function getProviderLabsData() {
-  const { providerId } = await getCurrentProviderRecord();
-  const supabase = await getSupabaseServerClient();
-  const [labsResult, patientsResult] = await Promise.all([
-    supabase
-      .from("lab_results")
-      .select("id, patient_id, panel_name, status, summary, markers, ordered_at, resulted_at")
-      .eq("provider_id", providerId)
-      .order("ordered_at", { ascending: false }),
-    supabase
-      .from("appointments")
-      .select("patient_id")
-      .eq("provider_id", providerId),
-  ]);
+  try {
+    const { providerId } = await getCurrentProviderRecord();
+    const supabase = await getSupabaseServerClient();
+    const admin = (() => {
+      try {
+        return getSupabaseAdminClient();
+      } catch {
+        return null;
+      }
+    })();
+    const dataClient = admin ?? supabase;
+    const [labsResult, patientsResult] = await Promise.all([
+      dataClient
+        .from("lab_results")
+        .select("id, patient_id, panel_name, status, summary, markers, ordered_at, resulted_at")
+        .eq("provider_id", providerId)
+        .order("ordered_at", { ascending: false }),
+      dataClient
+        .from("appointments")
+        .select("patient_id")
+        .eq("provider_id", providerId),
+    ]);
 
-  if (labsResult.error) {
-    throw new Error(labsResult.error.message);
+    if (labsResult.error || patientsResult.error) {
+      console.error("Provider labs lookup failed:", {
+        labs: labsResult.error?.message,
+        patients: patientsResult.error?.message,
+      });
+      return { labs: [], patients: [] };
+    }
+
+    const patientIds = Array.from(new Set((patientsResult.data ?? []).map((item) => item.patient_id).filter(Boolean) as string[]));
+    const patientNameMap = await getProfileNameMap(patientIds);
+    const patients = patientIds.map((id) => ({ id, name: patientNameMap.get(id) ?? "Patient" }));
+    const labs: LabResult[] = ((labsResult.data ?? []) as Array<{
+      id: string;
+      patient_id: string | null;
+      panel_name: string;
+      status: string | null;
+      summary: string | null;
+      markers: unknown;
+      ordered_at: string | null;
+      resulted_at: string | null;
+    }>).map((item) => ({
+      id: item.id,
+      panelName: item.panel_name,
+      status: (item.status ?? "ordered") as LabResult["status"],
+      orderedAt: item.ordered_at ?? new Date().toISOString(),
+      resultedAt: item.resulted_at,
+      summary: item.summary ?? "Awaiting lab result summary.",
+      markers: normalizeLabMarkers(item.markers),
+      providerName: "You",
+      patientName: item.patient_id ? patientNameMap.get(item.patient_id) ?? "Patient" : "Patient",
+    }));
+
+    return { labs, patients };
+  } catch (error) {
+    console.error("Provider labs data error:", error instanceof Error ? error.message : String(error));
+    return { labs: [], patients: [] };
   }
-
-  if (patientsResult.error) {
-    throw new Error(patientsResult.error.message);
-  }
-
-  const patientIds = Array.from(new Set((patientsResult.data ?? []).map((item) => item.patient_id).filter(Boolean) as string[]));
-  const patientNameMap = await getProfileNameMap(patientIds);
-  const patients = patientIds.map((id) => ({ id, name: patientNameMap.get(id) ?? "Patient" }));
-  const labs: LabResult[] = ((labsResult.data ?? []) as Array<{
-    id: string;
-    patient_id: string | null;
-    panel_name: string;
-    status: string | null;
-    summary: string | null;
-    markers: unknown;
-    ordered_at: string | null;
-    resulted_at: string | null;
-  }>).map((item) => ({
-    id: item.id,
-    panelName: item.panel_name,
-    status: (item.status ?? "ordered") as LabResult["status"],
-    orderedAt: item.ordered_at ?? new Date().toISOString(),
-    resultedAt: item.resulted_at,
-    summary: item.summary ?? "Awaiting lab result summary.",
-    markers: normalizeLabMarkers(item.markers),
-    providerName: "You",
-    patientName: item.patient_id ? patientNameMap.get(item.patient_id) ?? "Patient" : "Patient",
-  }));
-
-  return { labs, patients };
 }
 
 export async function getEducationData() {
@@ -1452,299 +1478,253 @@ export async function getProviderDashboardData() {
 }
 
 export async function getProviderScheduleData() {
-  const { providerId } = await getCurrentProviderRecord();
-  const supabase = await getSupabaseServerClient();
-  const admin = getSupabaseAdminClient();
-  const todayStart = startOfDay(new Date()).toISOString();
-  const todayEnd = endOfDay(new Date()).toISOString();
+  try {
+    const { providerId } = await getCurrentProviderRecord();
+    const supabase = await getSupabaseServerClient();
+    const admin = (() => {
+      try {
+        return getSupabaseAdminClient();
+      } catch {
+        return null;
+      }
+    })();
+    const dataClient = admin ?? supabase;
+    const todayStart = startOfDay(new Date()).toISOString();
+    const todayEnd = endOfDay(new Date()).toISOString();
 
-  const { data: appointments, error: appointmentsError } = await supabase
-    .from("appointments")
-    .select("id, patient_id, scheduled_at, chief_complaint, status, type")
-    .eq("provider_id", providerId)
-    .gte("scheduled_at", todayStart)
-    .lte("scheduled_at", todayEnd)
-    .order("scheduled_at", { ascending: true });
-
-  if (appointmentsError) {
-    throw new Error(appointmentsError.message);
-  }
-
-  const patientIds = Array.from(new Set((appointments ?? []).map((appointment) => appointment.patient_id).filter(Boolean)));
-  const { data: patientProfiles, error: patientProfilesError } = patientIds.length
-    ? await admin.from("profiles").select("id, full_name").in("id", patientIds)
-    : { data: [], error: null };
-
-  if (patientProfilesError) {
-    throw new Error(patientProfilesError.message);
-  }
-
-  const patientProfileMap = new Map((patientProfiles ?? []).map((profile) => [profile.id, profile.full_name ?? "Patient"]));
-
-  return (appointments ?? []).map((appointment) => ({
-    id: appointment.id,
-    patientId: appointment.patient_id,
-    patientName: patientProfileMap.get(appointment.patient_id) ?? "Patient",
-    scheduledAt: appointment.scheduled_at,
-    chiefComplaint: appointment.chief_complaint ?? "General follow-up",
-    status: appointment.status,
-    type: appointment.type,
-  })) as ProviderDashboardAppointment[];
-}
-
-export async function getProviderCarePlansPageData(): Promise<ProviderCarePlansPageData> {
-  const { providerId } = await getCurrentProviderRecord();
-  const admin = getSupabaseAdminClient();
-
-  const primaryPlansResult = await admin
-    .from("care_plans")
-    .select("id, patient_id, provider_id, title, description, status, milestones, created_at, start_date, end_date")
-    .eq("provider_id", providerId)
-    .order("created_at", { ascending: false });
-
-  const fallbackPlansResult = isMissingCarePlanDateColumnError(primaryPlansResult.error)
-    ? await admin
-        .from("care_plans")
-        .select("id, patient_id, provider_id, title, description, status, milestones, created_at")
-        .eq("provider_id", providerId)
-        .order("created_at", { ascending: false })
-    : null;
-
-  const plansError = fallbackPlansResult ? fallbackPlansResult.error : primaryPlansResult.error;
-  if (plansError) {
-    throw new Error(plansError.message);
-  }
-
-  const primaryTemplatesResult = await admin
-    .from("care_plans")
-    .select("id, patient_id, provider_id, title, description, status, milestones, created_at, start_date, end_date")
-    .is("patient_id", null)
-    .order("created_at", { ascending: false });
-
-  const fallbackTemplatesResult = isMissingCarePlanDateColumnError(primaryTemplatesResult.error)
-    ? await admin
-        .from("care_plans")
-        .select("id, patient_id, provider_id, title, description, status, milestones, created_at")
-        .is("patient_id", null)
-        .order("created_at", { ascending: false })
-    : null;
-
-  const templatesError = fallbackTemplatesResult ? fallbackTemplatesResult.error : primaryTemplatesResult.error;
-  if (templatesError) {
-    throw new Error(templatesError.message);
-  }
-
-  const { data: appointments, error: appointmentsError } = await admin
-    .from("appointments")
-    .select("patient_id, scheduled_at")
-    .eq("provider_id", providerId)
-    .order("scheduled_at", { ascending: false });
-
-  if (appointmentsError) {
-    throw new Error(appointmentsError.message);
-  }
-
-  const patientIds = Array.from(new Set((appointments ?? []).map((appointment) => appointment.patient_id).filter((value): value is string => Boolean(value))));
-  const { data: patientProfiles, error: patientProfilesError } = patientIds.length
-    ? await admin.from("profiles").select("id, full_name, avatar_url").in("id", patientIds)
-    : { data: [], error: null };
-
-  if (patientProfilesError) {
-    throw new Error(patientProfilesError.message);
-  }
-
-  const patientMap = new Map((patientProfiles ?? []).map((profile) => [
-    profile.id,
-    {
-      name: profile.full_name ?? "Patient",
-      avatarUrl: profile.avatar_url ?? null,
-    },
-  ]));
-
-  const lastVisitByPatient = new Map<string, string>();
-  for (const appointment of appointments ?? []) {
-    if (appointment.patient_id && !lastVisitByPatient.has(appointment.patient_id)) {
-      lastVisitByPatient.set(appointment.patient_id, appointment.scheduled_at);
-    }
-  }
-
-  const plans = ((fallbackPlansResult?.data ?? primaryPlansResult.data ?? []) as Record<string, unknown>[]).map((carePlan) =>
-    mapProviderCarePlanListItem(coerceCarePlanRow(carePlan), patientMap),
-  );
-
-  const patients: ProviderCarePlanPatientOption[] = patientIds.map((patientId) => ({
-    id: patientId,
-    name: patientMap.get(patientId)?.name ?? "Patient",
-    avatarUrl: patientMap.get(patientId)?.avatarUrl ?? null,
-    lastVisit: lastVisitByPatient.get(patientId) ?? new Date().toISOString(),
-  }));
-
-  const templates: ProviderCarePlanTemplateOption[] = ((fallbackTemplatesResult?.data ?? primaryTemplatesResult.data ?? []) as Record<string, unknown>[])
-    .map(coerceCarePlanRow)
-    .filter((template) => template.status === "template")
-    .map((template) => ({
-      id: template.id,
-      title: template.title,
-      description: template.description ?? "Reusable care plan template.",
-      milestones: normalizeCarePlanMilestones(template.milestones, new Date().toISOString()),
-    }));
-
-  return {
-    plans,
-    patients,
-    templates,
-  };
-}
-
-export async function getProviderPatientDetailData(patientId: string): Promise<{ id: string; name: string; dateOfBirth: string | null; lastVisit: string; carePlan: string; reason: string; upcomingAppointments: ProviderDashboardAppointment[]; recentAppointments: ProviderDashboardAppointment[] } | null> {
-  const { providerId } = await getCurrentProviderRecord();
-  const supabase = await getSupabaseServerClient();
-  const admin = getSupabaseAdminClient();
-
-  const [profileResult, appointmentsResult, carePlanResult] = await Promise.all([
-    admin
-      .from("profiles")
-      .select("id, full_name, date_of_birth")
-      .eq("id", patientId)
-      .maybeSingle(),
-    supabase
+    const { data: appointments, error: appointmentsError } = await dataClient
       .from("appointments")
       .select("id, patient_id, scheduled_at, chief_complaint, status, type")
       .eq("provider_id", providerId)
-      .eq("patient_id", patientId)
-      .order("scheduled_at", { ascending: false }),
-    supabase
-      .from("care_plans")
-      .select("title")
-      .eq("provider_id", providerId)
-      .eq("patient_id", patientId)
-      .eq("status", "active")
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle(),
-  ]);
+      .gte("scheduled_at", todayStart)
+      .lte("scheduled_at", todayEnd)
+      .order("scheduled_at", { ascending: true });
 
-  if (profileResult.error) {
-    throw new Error(profileResult.error.message);
+    if (appointmentsError) {
+      console.error("Provider schedule appointments failed:", appointmentsError.message);
+      return [] as ProviderDashboardAppointment[];
+    }
+
+    const patientIds = Array.from(new Set((appointments ?? []).map((appointment) => appointment.patient_id).filter(Boolean)));
+    const { data: patientProfiles, error: patientProfilesError } = patientIds.length
+      ? await (admin ?? supabase).from("profiles").select("id, full_name").in("id", patientIds)
+      : { data: [], error: null };
+
+    if (patientProfilesError) {
+      console.error("Provider schedule patient profiles failed:", patientProfilesError.message);
+    }
+
+    const patientProfileMap = new Map((patientProfiles ?? []).map((profile) => [profile.id, profile.full_name ?? "Patient"]));
+
+    return (appointments ?? []).map((appointment) => ({
+      id: appointment.id,
+      patientId: appointment.patient_id,
+      patientName: patientProfileMap.get(appointment.patient_id) ?? "Patient",
+      scheduledAt: appointment.scheduled_at,
+      chiefComplaint: appointment.chief_complaint ?? "General follow-up",
+      status: appointment.status,
+      type: appointment.type,
+    })) as ProviderDashboardAppointment[];
+  } catch (error) {
+    console.error("Provider schedule data error:", error instanceof Error ? error.message : String(error));
+    return [] as ProviderDashboardAppointment[];
   }
-
-  if (appointmentsResult.error) {
-    throw new Error(appointmentsResult.error.message);
-  }
-
-  if (carePlanResult.error) {
-    throw new Error(carePlanResult.error.message);
-  }
-
-  const appointments = appointmentsResult.data ?? [];
-
-  if (!profileResult.data || !appointments.length) {
-    return null;
-  }
-
-  const patientName = profileResult.data.full_name ?? "Patient";
-  const mappedAppointments = appointments.map((appointment) => ({
-    id: appointment.id,
-    patientId: appointment.patient_id,
-    patientName,
-    scheduledAt: appointment.scheduled_at,
-    chiefComplaint: appointment.chief_complaint ?? "General follow-up",
-    status: appointment.status,
-    type: appointment.type,
-  })) as ProviderDashboardAppointment[];
-
-  const now = Date.now();
-  const upcomingAppointments = mappedAppointments
-    .filter((appointment) => new Date(appointment.scheduledAt).getTime() >= now)
-    .sort((left, right) => new Date(left.scheduledAt).getTime() - new Date(right.scheduledAt).getTime());
-  const recentAppointments = mappedAppointments
-    .filter((appointment) => new Date(appointment.scheduledAt).getTime() < now)
-    .sort((left, right) => new Date(right.scheduledAt).getTime() - new Date(left.scheduledAt).getTime())
-    .slice(0, 5);
-  const lastVisit = recentAppointments[0]?.scheduledAt ?? mappedAppointments[0]?.scheduledAt ?? new Date().toISOString();
-
-  return {
-    id: patientId,
-    name: patientName,
-    dateOfBirth: profileResult.data.date_of_birth ?? null,
-    lastVisit,
-    carePlan: carePlanResult.data?.title ?? "No active plan",
-    reason: mappedAppointments[0]?.chiefComplaint ?? "No chief complaint on file",
-    upcomingAppointments,
-    recentAppointments,
-  };
 }
 
-function getMonthBuckets(count: number) {
-  const now = new Date();
+export async function getProviderCarePlansPageData(): Promise<ProviderCarePlansPageData> {
+  try {
+    const { providerId } = await getCurrentProviderRecord();
+    const admin = getSupabaseAdminClient();
 
-  return Array.from({ length: count }, (_, index) => {
-    const date = new Date(now.getFullYear(), now.getMonth() - (count - index - 1), 1);
+    const primaryPlansResult = await admin
+      .from("care_plans")
+      .select("id, patient_id, provider_id, title, description, status, milestones, created_at, start_date, end_date")
+      .eq("provider_id", providerId)
+      .order("created_at", { ascending: false });
+
+    const fallbackPlansResult = isMissingCarePlanDateColumnError(primaryPlansResult.error)
+      ? await admin
+          .from("care_plans")
+          .select("id, patient_id, provider_id, title, description, status, milestones, created_at")
+          .eq("provider_id", providerId)
+          .order("created_at", { ascending: false })
+      : null;
+
+    const plansError = fallbackPlansResult ? fallbackPlansResult.error : primaryPlansResult.error;
+    if (plansError) {
+      console.error("Provider care plans lookup failed:", plansError.message);
+      return { plans: [], patients: [], templates: [] };
+    }
+
+    const primaryTemplatesResult = await admin
+      .from("care_plans")
+      .select("id, patient_id, provider_id, title, description, status, milestones, created_at, start_date, end_date")
+      .is("patient_id", null)
+      .order("created_at", { ascending: false });
+
+    const fallbackTemplatesResult = isMissingCarePlanDateColumnError(primaryTemplatesResult.error)
+      ? await admin
+          .from("care_plans")
+          .select("id, patient_id, provider_id, title, description, status, milestones, created_at")
+          .is("patient_id", null)
+          .order("created_at", { ascending: false })
+      : null;
+
+    const templatesError = fallbackTemplatesResult ? fallbackTemplatesResult.error : primaryTemplatesResult.error;
+    if (templatesError) {
+      console.error("Provider care plan templates failed:", templatesError.message);
+      return { plans: [], patients: [], templates: [] };
+    }
+
+    const { data: appointments, error: appointmentsError } = await admin
+      .from("appointments")
+      .select("patient_id, scheduled_at")
+      .eq("provider_id", providerId)
+      .order("scheduled_at", { ascending: false });
+
+    if (appointmentsError) {
+      console.error("Provider care plan patients failed:", appointmentsError.message);
+      return { plans: [], patients: [], templates: [] };
+    }
+
+    const patientIds = Array.from(new Set((appointments ?? []).map((appointment) => appointment.patient_id).filter((value): value is string => Boolean(value))));
+    const { data: patientProfiles, error: patientProfilesError } = patientIds.length
+      ? await admin.from("profiles").select("id, full_name, avatar_url").in("id", patientIds)
+      : { data: [], error: null };
+
+    if (patientProfilesError) {
+      console.error("Provider care plan profile lookup failed:", patientProfilesError.message);
+    }
+
+    const patientMap = new Map((patientProfiles ?? []).map((profile) => [
+      profile.id,
+      {
+        name: profile.full_name ?? "Patient",
+        avatarUrl: profile.avatar_url ?? null,
+      },
+    ]));
+
+    const lastVisitByPatient = new Map<string, string>();
+    for (const appointment of appointments ?? []) {
+      if (appointment.patient_id && !lastVisitByPatient.has(appointment.patient_id)) {
+        lastVisitByPatient.set(appointment.patient_id, appointment.scheduled_at);
+      }
+    }
+
+    const plans = ((fallbackPlansResult?.data ?? primaryPlansResult.data ?? []) as Record<string, unknown>[]).map((carePlan) =>
+      mapProviderCarePlanListItem(coerceCarePlanRow(carePlan), patientMap),
+    );
+
+    const patients: ProviderCarePlanPatientOption[] = patientIds.map((patientId) => ({
+      id: patientId,
+      name: patientMap.get(patientId)?.name ?? "Patient",
+      avatarUrl: patientMap.get(patientId)?.avatarUrl ?? null,
+      lastVisit: lastVisitByPatient.get(patientId) ?? new Date().toISOString(),
+    }));
+
+    const templates: ProviderCarePlanTemplateOption[] = ((fallbackTemplatesResult?.data ?? primaryTemplatesResult.data ?? []) as Record<string, unknown>[])
+      .map(coerceCarePlanRow)
+      .filter((template) => template.status === "template")
+      .map((template) => ({
+        id: template.id,
+        title: template.title,
+        description: template.description ?? "Reusable care plan template.",
+        milestones: normalizeCarePlanMilestones(template.milestones, new Date().toISOString()),
+      }));
+
+    return { plans, patients, templates };
+  } catch (error) {
+    console.error("Provider care plans data error:", error instanceof Error ? error.message : String(error));
+    return { plans: [], patients: [], templates: [] };
+  }
+}
+
+export async function getProviderPatientDetailData(patientId: string): Promise<{ id: string; name: string; dateOfBirth: string | null; lastVisit: string; carePlan: string; reason: string; upcomingAppointments: ProviderDashboardAppointment[]; recentAppointments: ProviderDashboardAppointment[] } | null> {
+  try {
+    const { providerId } = await getCurrentProviderRecord();
+    const supabase = await getSupabaseServerClient();
+    const admin = (() => {
+      try {
+        return getSupabaseAdminClient();
+      } catch {
+        return null;
+      }
+    })();
+    const dataClient = admin ?? supabase;
+
+    const [profileResult, appointmentsResult, carePlanResult] = await Promise.all([
+      (admin ?? supabase)
+        .from("profiles")
+        .select("id, full_name, date_of_birth")
+        .eq("id", patientId)
+        .maybeSingle(),
+      dataClient
+        .from("appointments")
+        .select("id, patient_id, scheduled_at, chief_complaint, status, type")
+        .eq("provider_id", providerId)
+        .eq("patient_id", patientId)
+        .order("scheduled_at", { ascending: false }),
+      dataClient
+        .from("care_plans")
+        .select("title")
+        .eq("provider_id", providerId)
+        .eq("patient_id", patientId)
+        .eq("status", "active")
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle(),
+    ]);
+
+    if (profileResult.error || appointmentsResult.error || carePlanResult.error) {
+      console.error("Provider patient detail lookup failed:", {
+        profile: profileResult.error?.message,
+        appointments: appointmentsResult.error?.message,
+        carePlan: carePlanResult.error?.message,
+      });
+      return null;
+    }
+
+    const appointments = appointmentsResult.data ?? [];
+    if (!profileResult.data || !appointments.length) {
+      return null;
+    }
+
+    const patientName = profileResult.data.full_name ?? "Patient";
+    const mappedAppointments = appointments.map((appointment) => ({
+      id: appointment.id,
+      patientId: appointment.patient_id,
+      patientName,
+      scheduledAt: appointment.scheduled_at,
+      chiefComplaint: appointment.chief_complaint ?? "General follow-up",
+      status: appointment.status,
+      type: appointment.type,
+    })) as ProviderDashboardAppointment[];
+
+    const now = Date.now();
+    const upcomingAppointments = mappedAppointments
+      .filter((appointment) => new Date(appointment.scheduledAt).getTime() >= now)
+      .sort((left, right) => new Date(left.scheduledAt).getTime() - new Date(right.scheduledAt).getTime());
+    const recentAppointments = mappedAppointments
+      .filter((appointment) => new Date(appointment.scheduledAt).getTime() < now)
+      .sort((left, right) => new Date(right.scheduledAt).getTime() - new Date(left.scheduledAt).getTime())
+      .slice(0, 5);
+    const lastVisit = recentAppointments[0]?.scheduledAt ?? mappedAppointments[0]?.scheduledAt ?? new Date().toISOString();
 
     return {
-      label: date.toLocaleString("en-US", { month: "short", year: "numeric" }),
-      tooltipLabel: date.toLocaleString("en-US", { month: "long", year: "numeric" }),
-      start: date,
-      end: new Date(date.getFullYear(), date.getMonth() + 1, 1),
-      members: new Set<string>(),
+      id: profileResult.data.id,
+      name: patientName,
+      dateOfBirth: profileResult.data.date_of_birth ?? null,
+      lastVisit,
+      carePlan: carePlanResult.data?.title ?? "No active plan",
+      reason: mappedAppointments[0]?.chiefComplaint ?? "No chief complaint on file",
+      upcomingAppointments,
+      recentAppointments,
     };
-  });
-}
-
-function formatDashboardDate(value?: string | null) {
-  if (!value) {
-    return "Unknown";
+  } catch (error) {
+    console.error("Provider patient detail data error:", error instanceof Error ? error.message : String(error));
+    return null;
   }
-
-  return new Intl.DateTimeFormat("en-US", {
-    month: "short",
-    day: "numeric",
-  }).format(new Date(value));
 }
-
-function formatDashboardDateTime(value?: string | null) {
-  if (!value) {
-    return "Unknown";
-  }
-
-  return new Intl.DateTimeFormat("en-US", {
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  }).format(new Date(value));
-}
-
-function getNotificationSeverity(type?: string | null) {
-  const normalized = type?.toLowerCase() ?? "";
-
-  if (["suspend", "cancel", "escalat", "urgent"].some((keyword) => normalized.includes(keyword))) {
-    return "High";
-  }
-
-  if (["invite", "appointment", "message", "review"].some((keyword) => normalized.includes(keyword))) {
-    return "Medium";
-  }
-
-  return "Low";
-}
-
-function isExpired(value?: string | null) {
-  return Boolean(value && new Date(value).getTime() < Date.now());
-}
-
-
-type NotificationFeedItem = {
-  id: string;
-  title: string;
-  body: string;
-  link: string | null;
-  type: string;
-  actor: string;
-  readAt: string | null;
-  createdAt: string;
-  severity: string;
-};
 
 export async function getNotificationShellData() {
   const user = await getCurrentUser();
