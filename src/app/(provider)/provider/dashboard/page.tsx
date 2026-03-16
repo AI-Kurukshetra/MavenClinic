@@ -1,3 +1,5 @@
+export const dynamic = "force-dynamic";
+
 import Link from "next/link";
 import { CalendarRange, ChevronRight, Clock3, MessageSquareReply, Users } from "lucide-react";
 import { DashboardShell } from "@/components/health/dashboard-shell";

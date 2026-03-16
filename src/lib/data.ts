@@ -1,4 +1,4 @@
-﻿import { addDays, differenceInCalendarDays, endOfDay, startOfDay, subDays } from "date-fns";
+import { addDays, differenceInCalendarDays, endOfDay, startOfDay, subDays } from "date-fns";
 import { getCurrentProfile, getCurrentUser } from "@/lib/auth";
 import { generateAiInsight } from "@/lib/ai";
 import { formatAvailabilityDay } from "@/lib/appointments";
@@ -355,22 +355,39 @@ async function getCurrentProviderRecord() {
     throw new Error("Authenticated provider required.");
   }
 
+  const admin = (() => {
+    try {
+      return getSupabaseAdminClient();
+    } catch {
+      return null;
+    }
+  })();
   const supabase = await getSupabaseServerClient();
-  const { data, error } = await supabase
-    .from("providers")
-    .select("id, profile_id")
-    .eq("profile_id", user.id)
-    .maybeSingle();
+  const providerResult = admin
+    ? await admin
+        .from("providers")
+        .select("id, profile_id")
+        .eq("profile_id", user.id)
+        .maybeSingle()
+    : await supabase
+        .from("providers")
+        .select("id, profile_id")
+        .eq("profile_id", user.id)
+        .maybeSingle();
 
-  if (error) {
-    throw new Error(error.message);
+  if (providerResult.error) {
+    console.error("Provider record lookup failed:", {
+      userId: user.id,
+      message: providerResult.error.message,
+    });
+    throw new Error(providerResult.error.message);
   }
 
-  if (!data) {
+  if (!providerResult.data) {
     throw new Error("Provider record not found.");
   }
 
-  return { userId: user.id, providerId: data.id };
+  return { userId: user.id, providerId: providerResult.data.id };
 }
 
 type CarePlanRowWithDates = {
@@ -1280,137 +1297,158 @@ export async function getEducationArticleData(articleId: string) {
 }
 
 export async function getProviderDashboardData() {
-  const { userId, providerId } = await getCurrentProviderRecord();
-  const supabase = await getSupabaseServerClient();
-  const admin = getSupabaseAdminClient();
-  const todayStart = startOfDay(new Date()).toISOString();
-  const todayEnd = endOfDay(new Date()).toISOString();
+  try {
+    const { userId, providerId } = await getCurrentProviderRecord();
+    const supabase = await getSupabaseServerClient();
+    const admin = (() => {
+      try {
+        return getSupabaseAdminClient();
+      } catch {
+        return null;
+      }
+    })();
+    const dataClient = admin ?? supabase;
+    const todayStart = startOfDay(new Date()).toISOString();
+    const todayEnd = endOfDay(new Date()).toISOString();
 
-  const [todaysAppointmentsResult, allAppointmentsResult, activeCarePlansResult, sentMessagesResult, availabilityResult] = await Promise.all([
-    supabase
-      .from("appointments")
-      .select("id, patient_id, scheduled_at, chief_complaint, status, type")
-      .eq("provider_id", providerId)
-      .gte("scheduled_at", todayStart)
-      .lte("scheduled_at", todayEnd)
-      .order("scheduled_at", { ascending: true }),
-    supabase
-      .from("appointments")
-      .select("id, patient_id, scheduled_at, chief_complaint, status, type")
-      .eq("provider_id", providerId)
-      .order("scheduled_at", { ascending: false }),
-    supabase
-      .from("care_plans")
-      .select("patient_id, status, title")
-      .eq("provider_id", providerId)
-      .eq("status", "active"),
-    supabase
-      .from("conversations")
-      .select("id")
-      .eq("provider_profile_id", userId),
-    supabase
-      .from("provider_availability")
-      .select("id, day_of_week, start_time, end_time")
-      .eq("provider_id", providerId)
-      .order("day_of_week", { ascending: true })
-      .order("start_time", { ascending: true }),
-  ]);
+    const [todaysAppointmentsResult, allAppointmentsResult, activeCarePlansResult, sentMessagesResult, availabilityResult] = await Promise.all([
+      dataClient
+        .from("appointments")
+        .select("id, patient_id, scheduled_at, chief_complaint, status, type")
+        .eq("provider_id", providerId)
+        .gte("scheduled_at", todayStart)
+        .lte("scheduled_at", todayEnd)
+        .order("scheduled_at", { ascending: true }),
+      dataClient
+        .from("appointments")
+        .select("id, patient_id, scheduled_at, chief_complaint, status, type")
+        .eq("provider_id", providerId)
+        .order("scheduled_at", { ascending: false }),
+      dataClient
+        .from("care_plans")
+        .select("patient_id, status, title")
+        .eq("provider_id", providerId)
+        .eq("status", "active"),
+      dataClient
+        .from("conversations")
+        .select("id")
+        .eq("provider_profile_id", userId),
+      dataClient
+        .from("provider_availability")
+        .select("id, day_of_week, start_time, end_time")
+        .eq("provider_id", providerId)
+        .order("day_of_week", { ascending: true })
+        .order("start_time", { ascending: true }),
+    ]);
 
-  if (todaysAppointmentsResult.error) {
-    throw new Error(todaysAppointmentsResult.error.message);
-  }
+    if (todaysAppointmentsResult.error) {
+      console.error("Provider dashboard today's appointments failed:", todaysAppointmentsResult.error.message);
+    }
 
-  if (allAppointmentsResult.error) {
-    throw new Error(allAppointmentsResult.error.message);
-  }
+    if (allAppointmentsResult.error) {
+      console.error("Provider dashboard appointments failed:", allAppointmentsResult.error.message);
+    }
 
-  if (activeCarePlansResult.error) {
-    throw new Error(activeCarePlansResult.error.message);
-  }
+    if (activeCarePlansResult.error) {
+      console.error("Provider dashboard care plans failed:", activeCarePlansResult.error.message);
+    }
 
-  if (sentMessagesResult.error) {
-    throw new Error(sentMessagesResult.error.message);
-  }
+    if (sentMessagesResult.error) {
+      console.error("Provider dashboard conversations failed:", sentMessagesResult.error.message);
+    }
 
-  if (availabilityResult.error) {
-    throw new Error(availabilityResult.error.message);
-  }
+    if (availabilityResult.error) {
+      console.error("Provider dashboard availability failed:", availabilityResult.error.message);
+    }
 
-  const allAppointments = allAppointmentsResult.data ?? [];
-  const todaysAppointments = todaysAppointmentsResult.data ?? [];
-  const patientIds = Array.from(new Set(allAppointments.map((appointment) => appointment.patient_id).filter(Boolean)));
-  const conversationIds = Array.from(new Set((sentMessagesResult.data ?? []).map((conversation) => conversation.id).filter(Boolean)));
+    const allAppointments = allAppointmentsResult.data ?? [];
+    const todaysAppointments = todaysAppointmentsResult.data ?? [];
+    const patientIds = Array.from(new Set(allAppointments.map((appointment) => appointment.patient_id).filter(Boolean)));
+    const conversationIds = Array.from(new Set((sentMessagesResult.data ?? []).map((conversation) => conversation.id).filter(Boolean)));
 
-  const [patientProfilesResult, unreadMessagesResult] = await Promise.all([
-    patientIds.length
-      ? admin.from("profiles").select("id, full_name").in("id", patientIds)
-      : Promise.resolve({ data: [] as Array<{ id: string; full_name: string | null }>, error: null }),
-    conversationIds.length
-      ? supabase
-          .from("messages")
-          .select("id", { count: "exact", head: true })
-          .in("conversation_id", conversationIds)
-          .neq("sender_id", userId)
-          .is("read_at", null)
-      : Promise.resolve({ count: 0, error: null }),
-  ]);
+    const [patientProfilesResult, unreadMessagesResult] = await Promise.all([
+      patientIds.length
+        ? (admin ?? supabase).from("profiles").select("id, full_name").in("id", patientIds)
+        : Promise.resolve({ data: [] as Array<{ id: string; full_name: string | null }>, error: null }),
+      conversationIds.length
+        ? dataClient
+            .from("messages")
+            .select("id", { count: "exact", head: true })
+            .in("conversation_id", conversationIds)
+            .neq("sender_id", userId)
+            .is("read_at", null)
+        : Promise.resolve({ count: 0, error: null }),
+    ]);
 
-  if (patientProfilesResult.error) {
-    throw new Error(patientProfilesResult.error.message);
-  }
+    if (patientProfilesResult.error) {
+      console.error("Provider dashboard patient profiles failed:", patientProfilesResult.error.message);
+    }
 
-  if (unreadMessagesResult.error) {
-    throw new Error(unreadMessagesResult.error.message);
-  }
+    if (unreadMessagesResult.error) {
+      console.error("Provider dashboard unread messages failed:", unreadMessagesResult.error.message);
+    }
 
-  const patientProfileMap = new Map((patientProfilesResult.data ?? []).map((profile) => [profile.id, profile.full_name ?? "Patient"]));
-  const activeCarePlanByPatient = new Map((activeCarePlansResult.data ?? []).filter((plan) => plan.patient_id).map((plan) => [plan.patient_id, { title: plan.title ?? "Active care plan", status: plan.status ?? "active" }]));
+    const patientProfileMap = new Map((patientProfilesResult.data ?? []).map((profile) => [profile.id, profile.full_name ?? "Patient"]));
+    const activeCarePlanByPatient = new Map((activeCarePlansResult.data ?? []).filter((plan) => plan.patient_id).map((plan) => [plan.patient_id, { title: plan.title ?? "Active care plan", status: plan.status ?? "active" }]));
 
-  const todaysAppointmentsMapped: ProviderDashboardAppointment[] = todaysAppointments.map((appointment) => ({
-    id: appointment.id,
-    patientId: appointment.patient_id,
-    patientName: patientProfileMap.get(appointment.patient_id) ?? "Patient",
-    scheduledAt: appointment.scheduled_at,
-    chiefComplaint: appointment.chief_complaint ?? "General follow-up",
-    status: appointment.status,
-    type: appointment.type,
-  }));
+    const todaysAppointmentsMapped: ProviderDashboardAppointment[] = todaysAppointments.map((appointment) => ({
+      id: appointment.id,
+      patientId: appointment.patient_id,
+      patientName: patientProfileMap.get(appointment.patient_id) ?? "Patient",
+      scheduledAt: appointment.scheduled_at,
+      chiefComplaint: appointment.chief_complaint ?? "General follow-up",
+      status: appointment.status,
+      type: appointment.type,
+    }));
 
-  const patientList: ProviderDashboardPatient[] = patientIds.map((patientId) => {
-    const patientAppointments = allAppointments.filter((appointment) => appointment.patient_id === patientId);
-    const lastAppointment = patientAppointments[0];
-    const carePlan = activeCarePlanByPatient.get(patientId);
+    const patientList: ProviderDashboardPatient[] = patientIds.map((patientId) => {
+      const patientAppointments = allAppointments.filter((appointment) => appointment.patient_id === patientId);
+      const lastAppointment = patientAppointments[0];
+      const carePlan = activeCarePlanByPatient.get(patientId);
+
+      return {
+        id: patientId,
+        name: patientProfileMap.get(patientId) ?? "Patient",
+        lastVisit: lastAppointment?.scheduled_at ?? new Date().toISOString(),
+        carePlan: carePlan?.title ?? "No active plan",
+        carePlanStatus: carePlan ? (carePlan.status === "active" ? "Active" : carePlan.status) : "No active plan",
+        reason: lastAppointment?.chief_complaint ?? "No chief complaint on file",
+      };
+    });
+
+    const availability: ProviderAvailabilitySlot[] = (availabilityResult.data ?? []).map((slot) => ({
+      id: slot.id,
+      dayOfWeek: formatAvailabilityDay(slot.day_of_week),
+      startTime: slot.start_time,
+      endTime: slot.end_time,
+      location: "Virtual",
+    }));
+
+    const stats: ProviderDashboardStats = {
+      totalAppointments: allAppointments.length,
+      pendingMessages: unreadMessagesResult.count ?? 0,
+      activePatients: patientIds.length,
+    };
 
     return {
-      id: patientId,
-      name: patientProfileMap.get(patientId) ?? "Patient",
-      lastVisit: lastAppointment?.scheduled_at ?? new Date().toISOString(),
-      carePlan: carePlan?.title ?? "No active plan",
-      carePlanStatus: carePlan ? (carePlan.status === "active" ? "Active" : carePlan.status) : "No active plan",
-      reason: lastAppointment?.chief_complaint ?? "No chief complaint on file",
+      stats,
+      todaysAppointments: todaysAppointmentsMapped,
+      patients: patientList,
+      schedule: availability,
     };
-  });
-
-  const availability: ProviderAvailabilitySlot[] = (availabilityResult.data ?? []).map((slot) => ({
-    id: slot.id,
-    dayOfWeek: formatAvailabilityDay(slot.day_of_week),
-    startTime: slot.start_time,
-    endTime: slot.end_time,
-    location: "Virtual",
-  }));
-
-  const stats: ProviderDashboardStats = {
-    totalAppointments: allAppointments.length,
-    pendingMessages: unreadMessagesResult.count ?? 0,
-    activePatients: patientIds.length,
-  };
-
-  return {
-    stats,
-    todaysAppointments: todaysAppointmentsMapped,
-    patients: patientList,
-    schedule: availability,
-  };
+  } catch (error) {
+    console.error("Provider dashboard data error:", error instanceof Error ? error.message : String(error));
+    return {
+      stats: {
+        totalAppointments: 0,
+        pendingMessages: 0,
+        activePatients: 0,
+      },
+      todaysAppointments: [] as ProviderDashboardAppointment[],
+      patients: [] as ProviderDashboardPatient[],
+      schedule: [] as ProviderAvailabilitySlot[],
+    };
+  }
 }
 
 export async function getProviderScheduleData() {

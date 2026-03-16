@@ -1,3 +1,5 @@
+export const dynamic = "force-dynamic";
+
 import Link from "next/link";
 import { DashboardShell } from "@/components/health/dashboard-shell";
 import { Badge } from "@/components/ui/badge";
