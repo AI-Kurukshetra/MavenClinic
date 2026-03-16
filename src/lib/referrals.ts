@@ -1,4 +1,4 @@
-import { getCurrentProfile, getCurrentUser } from "@/lib/auth";
+﻿import { getCurrentProfile, getCurrentUser } from "@/lib/auth";
 import { type PatientReferralsPageData, type ProviderReferralListItem, type ProviderReferralsPageData, type ReferralPayload, formatReferralSpecialty } from "@/lib/referral-shared";
 import { getSupabaseAdminClient } from "@/lib/supabase/admin";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
@@ -23,6 +23,51 @@ function getAdminClientSafe() {
     console.error("Referrals admin client unavailable:", error);
     return null;
   }
+}
+
+const referralSelect = "id, patient_id, referring_provider_id, referred_to_provider_id, referred_to_specialty, reason, urgency, status, clinical_notes, created_at";
+const legacyReferralSelect = "id, patient_id, referring_provider_id, referred_to_provider_id, referred_to_specialty, reason, urgency, status, created_at";
+
+async function fetchReferralRows(
+  client: any,
+  column: "patient_id" | "referring_provider_id",
+  value: string,
+) {
+  const primary = await client
+    .from("referrals")
+    .select(referralSelect)
+    .eq(column, value)
+    .order("created_at", { ascending: false });
+
+  if (!primary.error) {
+    return {
+      data: (primary.data ?? []) as ReferralRow[],
+      error: null,
+    };
+  }
+
+  if (!primary.error.message.includes("clinical_notes")) {
+    return {
+      data: [] as ReferralRow[],
+      error: primary.error,
+    };
+  }
+
+  console.warn("Referrals legacy schema fallback:", primary.error.message);
+
+  const fallback = await client
+    .from("referrals")
+    .select(legacyReferralSelect)
+    .eq(column, value)
+    .order("created_at", { ascending: false });
+
+  return {
+    data: ((fallback.data ?? []) as Array<Omit<ReferralRow, "clinical_notes">>).map((row) => ({
+      ...row,
+      clinical_notes: null,
+    })),
+    error: fallback.error,
+  };
 }
 type ProviderRow = {
   id: string;
@@ -62,7 +107,7 @@ async function getProviderContext() {
     .maybeSingle();
 
   if (error) {
-    throw new Error(error.message);
+    return { referrals: [] };
   }
 
   if (!data?.id) {
@@ -105,15 +150,11 @@ export async function getProviderReferralsPageData(): Promise<ProviderReferralsP
   const admin = getSupabaseAdminClient();
 
   const [referralsResult, appointmentsResult, providersResult] = await Promise.all([
-    admin
-      .from("referrals")
-      .select("id, patient_id, referring_provider_id, referred_to_provider_id, referred_to_specialty, reason, urgency, status, clinical_notes, created_at")
-      .eq("referring_provider_id", providerId)
-      .order("created_at", { ascending: false }),
+    fetchReferralRows(admin, "referring_provider_id", String(providerId)),
     admin
       .from("appointments")
       .select("patient_id, scheduled_at")
-      .eq("provider_id", providerId)
+      .eq("provider_id", String(providerId))
       .order("scheduled_at", { ascending: false }),
     admin
       .from("providers")
@@ -191,37 +232,33 @@ export async function getPatientReferralsPageData(): Promise<PatientReferralsPag
 
   const supabase = await getSupabaseServerClient();
   const admin = getAdminClientSafe();
-  const { data, error } = await supabase
-    .from("referrals")
-    .select("id, patient_id, referring_provider_id, referred_to_provider_id, referred_to_specialty, reason, urgency, status, clinical_notes, created_at")
-    .eq("patient_id", user.id)
-    .order("created_at", { ascending: false });
+  const referralClient = admin ?? supabase;
+  const { data: referralRows, error } = await fetchReferralRows(referralClient, "patient_id", user.id);
 
   if (error) {
-    throw new Error(error.message);
+    console.error("Patient referrals lookup failed:", error.message);
+    return { referrals: [] };
   }
-
-  const referralRows = (data ?? []) as ReferralRow[];
   const providerIds = Array.from(new Set(referralRows.flatMap((row) => [row.referring_provider_id, row.referred_to_provider_id]).filter((value): value is string => Boolean(value))));
-  const providersResult = providerIds.length
-    ? await (admin ?? supabase).from("providers").select("id, profile_id, specialty").in("id", providerIds)
+  const providersResult = providerIds.length && admin
+    ? await admin.from("providers").select("id, profile_id, specialty").in("id", providerIds)
     : { data: [], error: null };
 
   if (providersResult.error) {
-    throw new Error(providersResult.error.message);
+    console.error("Patient referrals provider lookup failed:", providersResult.error.message);
   }
 
-  const providerRows = (providersResult.data ?? []) as Array<{ id: string; profile_id: string | null; specialty: string }>;
+  const providerRows = ((providersResult.error ? [] : providersResult.data) ?? []) as Array<{ id: string; profile_id: string | null; specialty: string }>;
   const profileIds = Array.from(new Set(providerRows.map((provider) => provider.profile_id).filter((value): value is string => Boolean(value))));
-  const profilesResult = profileIds.length
-    ? await (admin ?? supabase).from("profiles").select("id, full_name").in("id", profileIds)
+  const profilesResult = profileIds.length && admin
+    ? await admin.from("profiles").select("id, full_name").in("id", profileIds)
     : { data: [], error: null };
 
   if (profilesResult.error) {
-    throw new Error(profilesResult.error.message);
+    console.error("Patient referrals profile lookup failed:", profilesResult.error.message);
   }
 
-  const profileMap = new Map((profilesResult.data ?? []).map((profile) => [profile.id, profile.full_name ?? "Maven provider"]));
+  const profileMap = new Map((((profilesResult.error ? [] : profilesResult.data) ?? [])).map((profile) => [profile.id, profile.full_name ?? "Maven provider"]));
   const providerMap = new Map(providerRows.map((provider) => [provider.id, { name: provider.profile_id ? profileMap.get(provider.profile_id) ?? "Maven provider" : "Maven provider", specialty: formatReferralSpecialty(provider.specialty) }]));
 
   return {
@@ -247,7 +284,7 @@ export async function createReferral(payload: ReferralPayload) {
   const { data: patientAppointment, error: patientAppointmentError } = await admin
     .from("appointments")
     .select("id")
-    .eq("provider_id", providerId)
+    .eq("provider_id", String(providerId))
     .eq("patient_id", payload.patientId)
     .limit(1)
     .maybeSingle();
@@ -282,7 +319,7 @@ export async function createReferral(payload: ReferralPayload) {
 
   const insertPayload = {
     patient_id: payload.patientId,
-    referring_provider_id: providerId,
+    referring_provider_id: String(providerId),
     referred_to_provider_id: payload.referredToProviderId ?? null,
     referred_to_specialty: payload.referredToSpecialty,
     reason: payload.reason,
@@ -303,7 +340,7 @@ export async function createReferral(payload: ReferralPayload) {
 
   await admin.from("notifications").insert({
     recipient_id: payload.patientId,
-    actor_id: userId,
+    actor_id: String(userId),
     type: "referral_created",
     title: `New referral from Dr. ${providerName}`,
     body: `You have been referred to a ${formatReferralSpecialty(payload.referredToSpecialty)} specialist.`,
@@ -312,8 +349,8 @@ export async function createReferral(payload: ReferralPayload) {
 
   const [patientProfileResult, providerRowsResult, providerProfilesResult] = await Promise.all([
     admin.from("profiles").select("id, full_name, avatar_url").eq("id", payload.patientId).maybeSingle(),
-    admin.from("providers").select("id, profile_id, specialty").in("id", [providerId, ...(payload.referredToProviderId ? [payload.referredToProviderId] : [])]),
-    admin.from("profiles").select("id, full_name").in("id", [userId]),
+    admin.from("providers").select("id, profile_id, specialty").in("id", [String(providerId), ...(payload.referredToProviderId ? [payload.referredToProviderId] : [])]),
+    admin.from("profiles").select("id, full_name").in("id", [String(userId)]),
   ]);
 
   if (patientProfileResult.error) {
@@ -348,4 +385,13 @@ export async function createReferral(payload: ReferralPayload) {
 
   return mapReferralRow(referral as ReferralRow, patientMap, providerMap);
 }
+
+
+
+
+
+
+
+
+
 

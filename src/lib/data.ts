@@ -1,4 +1,4 @@
-import { addDays, differenceInCalendarDays, endOfDay, startOfDay, subDays } from "date-fns";
+﻿import { addDays, differenceInCalendarDays, endOfDay, startOfDay, subDays } from "date-fns";
 import { getCurrentProfile, getCurrentUser } from "@/lib/auth";
 import { generateAiInsight } from "@/lib/ai";
 import { formatAvailabilityDay } from "@/lib/appointments";
@@ -1006,13 +1006,14 @@ export async function getRecordsData() {
         return null;
       }
     })();
+    const recordsClient = admin ?? supabase;
     const [prescriptionsResult, labsResult] = await Promise.all([
-      supabase
+      recordsClient
         .from("prescriptions")
         .select("id, medication_name, dosage, frequency, instructions, status, refills_remaining, prescribed_at, expires_at, provider_id")
         .eq("patient_id", user.id)
         .order("prescribed_at", { ascending: false }),
-      supabase
+      recordsClient
         .from("lab_results")
         .select("id, panel_name, status, summary, markers, ordered_at, resulted_at, provider_id")
         .eq("patient_id", user.id)
@@ -1021,19 +1022,42 @@ export async function getRecordsData() {
     ]);
 
     if (prescriptionsResult.error) {
-      throw new Error(prescriptionsResult.error.message);
+      console.error("Records prescriptions lookup failed:", prescriptionsResult.error.message);
     }
 
     if (labsResult.error) {
-      throw new Error(labsResult.error.message);
+      console.error("Records labs lookup failed:", labsResult.error.message);
     }
 
+    const safePrescriptionRows = ((prescriptionsResult.error ? [] : prescriptionsResult.data) ?? []) as Array<{
+      id: string;
+      medication_name: string;
+      dosage: string;
+      frequency: string;
+      instructions: string | null;
+      status: string | null;
+      refills_remaining: number | null;
+      prescribed_at: string | null;
+      expires_at: string | null;
+      provider_id: string | null;
+    }>;
+    const safeLabRows = ((labsResult.error ? [] : labsResult.data) ?? []) as Array<{
+      id: string;
+      panel_name: string;
+      status: string | null;
+      summary: string | null;
+      markers: unknown;
+      ordered_at: string | null;
+      resulted_at: string | null;
+      provider_id: string | null;
+    }>;
+
     const providerIds = Array.from(new Set([
-      ...(prescriptionsResult.data ?? []).map((item) => item.provider_id).filter(Boolean),
-      ...(labsResult.data ?? []).map((item) => item.provider_id).filter(Boolean),
+      ...safePrescriptionRows.map((item) => item.provider_id).filter(Boolean),
+      ...safeLabRows.map((item) => item.provider_id).filter(Boolean),
     ] as string[]));
     const providerRows = providerIds.length
-      ? await (admin ?? supabase).from("providers").select("id, profile_id").in("id", providerIds)
+      ? await recordsClient.from("providers").select("id, profile_id").in("id", providerIds)
       : { data: [] as Array<{ id: string; profile_id: string | null }>, error: null };
 
     if (providerRows.error) {
@@ -1048,18 +1072,7 @@ export async function getRecordsData() {
       ((providerRows.data ?? []) as Array<{ id: string; profile_id: string | null }>).map((provider) => [provider.id, provider.profile_id ? profileMap.get(provider.profile_id) ?? "Care team" : "Care team"]),
     );
 
-    const prescriptions: Prescription[] = ((prescriptionsResult.data ?? []) as Array<{
-      id: string;
-      medication_name: string;
-      dosage: string;
-      frequency: string;
-      instructions: string | null;
-      status: string | null;
-      refills_remaining: number | null;
-      prescribed_at: string | null;
-      expires_at: string | null;
-      provider_id: string | null;
-    }>).map((item) => ({
+    const prescriptions: Prescription[] = safePrescriptionRows.map((item) => ({
       id: item.id,
       medicationName: item.medication_name,
       dosage: item.dosage,
@@ -1072,16 +1085,7 @@ export async function getRecordsData() {
       providerName: item.provider_id ? providerNameMap.get(item.provider_id) ?? "Care team" : "Care team",
     }));
 
-    const labs: LabResult[] = ((labsResult.data ?? []) as Array<{
-      id: string;
-      panel_name: string;
-      status: string | null;
-      summary: string | null;
-      markers: unknown;
-      ordered_at: string | null;
-      resulted_at: string | null;
-      provider_id: string | null;
-    }>).map((item) => ({
+    const labs: LabResult[] = safeLabRows.map((item) => ({
       id: item.id,
       panelName: item.panel_name,
       status: (item.status ?? "ordered") as LabResult["status"],
@@ -1117,7 +1121,6 @@ export async function getRecordsData() {
     return { records: [], prescriptions: [], labs: [] };
   }
 }
-
 export async function getProviderPrescriptionsData() {
   const { providerId } = await getCurrentProviderRecord();
   const supabase = await getSupabaseServerClient();

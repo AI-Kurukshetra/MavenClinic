@@ -1,4 +1,4 @@
-import "server-only";
+﻿import "server-only";
 
 import { getCurrentUser } from "@/lib/auth";
 import { getSpecialtyLabel } from "@/lib/appointments";
@@ -322,14 +322,17 @@ export async function markConversationRead(conversationId: string, userId: strin
 
 export async function getPatientConversationCandidates() {
   const supabase = await getSupabaseServerClient();
-  const { data: providers, error } = await supabase
+  const admin = getAdminClientSafe();
+  const dataClient = admin ?? supabase;
+  const { data: providers, error } = await dataClient
     .from("providers")
     .select("id, profile_id, specialty, languages, accepting_patients")
     .eq("accepting_patients", true)
     .order("specialty", { ascending: true });
 
   if (error) {
-    throw new Error(error.message);
+    console.error("Patient conversation candidates lookup failed:", error.message);
+    return [] as ConversationCandidate[];
   }
 
   const rows = (providers ?? []) as ProviderRow[];
@@ -350,7 +353,6 @@ export async function getPatientConversationCandidates() {
     } satisfies ConversationCandidate];
   });
 }
-
 export async function getProviderConversationCandidates(userId: string) {
   const { providerId } = await getProviderContext(userId);
   const supabase = await getSupabaseServerClient();
