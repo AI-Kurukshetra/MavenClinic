@@ -86,10 +86,11 @@ async function getProviderContext(userId?: string): Promise<ProviderContext> {
   }
 
   const admin = getAdminClientSafe();
-  const supabase = await getSupabaseServerClient();
-  const result = admin
-    ? await admin.from("providers").select("id, profile_id").eq("profile_id", user.id).maybeSingle()
-    : await supabase.from("providers").select("id, profile_id").eq("profile_id", user.id).maybeSingle();
+  if (!admin) {
+    throw new Error("Provider messaging admin access unavailable.");
+  }
+
+  const result = await admin.from("providers").select("id, profile_id").eq("profile_id", user.id).maybeSingle();
 
   if (result.error) {
     console.error("Provider messaging context failed:", result.error.message);
