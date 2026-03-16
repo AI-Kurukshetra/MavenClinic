@@ -15,6 +15,72 @@ import { mapEducationArticle, type EducationArticleRow } from '@/lib/education';
 import { getSupabaseAdminClient } from "@/lib/supabase/admin";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 import type { Appointment, CycleLog, LabResult, MessageThread, Prescription, Provider, RecordItem, SymptomLog } from "@/types/domain";
+import { formatDate, formatDateTime } from "@/lib/utils";
+
+type NotificationFeedItem = {
+  id: string;
+  title: string;
+  body: string;
+  link: string | null;
+  type: string;
+  actor: string;
+  readAt: string | null;
+  createdAt: string;
+  severity: "High" | "Medium" | "Low";
+};
+
+type MonthBucket = {
+  start: Date;
+  end: Date;
+  label: string;
+  tooltipLabel: string;
+  members: Set<string>;
+};
+
+function getNotificationSeverity(type?: string | null): NotificationFeedItem["severity"] {
+  const normalized = type?.toLowerCase() ?? "";
+
+  if (["suspend", "cancel", "escalat", "urgent"].some((keyword) => normalized.includes(keyword))) {
+    return "High";
+  }
+
+  if (["invite", "appointment", "message", "review"].some((keyword) => normalized.includes(keyword))) {
+    return "Medium";
+  }
+
+  return "Low";
+}
+
+function formatDashboardDate(value?: string | null) {
+  return value ? formatDate(value) : "Not available";
+}
+
+function formatDashboardDateTime(value?: string | null) {
+  return value ? formatDateTime(value) : "Not available";
+}
+
+function isExpired(value?: string | null) {
+  return value ? new Date(value).getTime() < Date.now() : false;
+}
+
+function getMonthBuckets(count: number): MonthBucket[] {
+  const now = new Date();
+  const buckets: MonthBucket[] = [];
+
+  for (let index = count - 1; index >= 0; index -= 1) {
+    const start = new Date(now.getFullYear(), now.getMonth() - index, 1);
+    const end = new Date(now.getFullYear(), now.getMonth() - index + 1, 1);
+    buckets.push({
+      start,
+      end,
+      label: new Intl.DateTimeFormat("en-US", { month: "short", year: "numeric" }).format(start),
+      tooltipLabel: new Intl.DateTimeFormat("en-US", { month: "long", year: "numeric" }).format(start),
+      members: new Set<string>(),
+    });
+  }
+
+  return buckets;
+}
 
 type ProviderDashboardStats = {
   totalAppointments: number;
