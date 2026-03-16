@@ -1,7 +1,8 @@
-﻿import type { User } from "@supabase/supabase-js";
+import type { User } from "@supabase/supabase-js";
 import type { AppRole } from "@/lib/roles";
 import { apiError } from "@/lib/api-response";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
+import { getSupabaseAdminClient } from "@/lib/supabase/admin";
 
 export type ApiProfile = {
   id: string;
@@ -19,9 +20,23 @@ function isMissingColumnError(error: { message?: string } | null, columnName: st
   return Boolean(error?.message?.includes(`Could not find the '${columnName}' column`));
 }
 
+function getAdminClientSafe() {
+  try {
+    return getSupabaseAdminClient();
+  } catch (error) {
+    console.error("API auth admin client unavailable:", {
+      message: error instanceof Error ? error.message : String(error),
+    });
+    return null;
+  }
+}
+
 async function getProfileForUser(userId: string) {
   const supabase = await getSupabaseServerClient();
-  const primaryResult = await supabase
+  const admin = getAdminClientSafe();
+  const profileClient = admin ?? supabase;
+
+  const primaryResult = await profileClient
     .from("profiles")
     .select("id, role, employer_id")
     .eq("id", userId)
@@ -29,19 +44,29 @@ async function getProfileForUser(userId: string) {
 
   if (!isMissingColumnError(primaryResult.error, "employer_id")) {
     if (primaryResult.error) {
+      console.error("API auth profile lookup failed:", {
+        userId,
+        message: primaryResult.error.message,
+        usedAdminClient: Boolean(admin),
+      });
       return { supabase, profile: null as ApiProfile | null, error: apiError(500, "profile_lookup_failed", "Unable to verify your account.") };
     }
 
     return { supabase, profile: (primaryResult.data as ApiProfile | null) ?? null, error: null };
   }
 
-  const fallbackResult = await supabase
+  const fallbackResult = await profileClient
     .from("profiles")
     .select("id, role")
     .eq("id", userId)
     .maybeSingle();
 
   if (fallbackResult.error) {
+    console.error("API auth profile fallback lookup failed:", {
+      userId,
+      message: fallbackResult.error.message,
+      usedAdminClient: Boolean(admin),
+    });
     return { supabase, profile: null as ApiProfile | null, error: apiError(500, "profile_lookup_failed", "Unable to verify your account.") };
   }
 
@@ -90,3 +115,4 @@ export async function requireApiRole(roles: AppRole[]) {
 
   return authResult;
 }
+

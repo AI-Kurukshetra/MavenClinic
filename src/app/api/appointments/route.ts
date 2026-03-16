@@ -5,6 +5,33 @@ import { apiError, apiSuccess } from "@/lib/api-response";
 import { sanitizeNullableText, sanitizeText } from "@/lib/sanitize";
 import { getSupabaseAdminClient } from "@/lib/supabase/admin";
 
+function normalizeSpecialty(value: string | null | undefined) {
+  return String(value ?? "general")
+    .toLowerCase()
+    .replace(/[^a-z]/g, "");
+}
+
+function formatUnknownError(error: unknown) {
+  if (error instanceof Error) {
+    return { message: error.message, stack: error.stack };
+  }
+
+  if (typeof error === "object" && error !== null) {
+    const entries = Object.fromEntries(
+      Object.getOwnPropertyNames(error).map((key) => [key, (error as Record<string, unknown>)[key]]),
+    );
+
+    return {
+      message: JSON.stringify({
+        constructor: error.constructor?.name ?? "Object",
+        ...entries,
+      }),
+      stack: undefined,
+    };
+  }
+
+  return { message: String(error), stack: undefined };
+}
 function hasSlot(availableDates: Awaited<ReturnType<typeof getAvailableSlotsForProvider>>, scheduledAt: string) {
   return availableDates.some((date) => date.slots.some((slot) => slot.startsAt === scheduledAt));
 }
@@ -23,10 +50,11 @@ export async function POST(request: Request) {
       return apiError(400, "invalid_appointment_request", payload.error.issues[0]?.message ?? "Invalid appointment request.");
     }
 
-    const { user, supabase } = authResult.context;
+    const { user } = authResult.context;
+    const admin = getSupabaseAdminClient();
     const { specialty, providerId, scheduledAt, chiefComplaint, paymentMethod } = payload.data;
 
-    const { data: provider, error: providerError } = await supabase
+    const { data: provider, error: providerError } = await admin
       .from("providers")
       .select("id, profile_id, specialty, accepting_patients")
       .eq("id", providerId)
@@ -40,7 +68,7 @@ export async function POST(request: Request) {
       return apiError(400, "provider_unavailable", "This provider is not accepting new appointments right now.");
     }
 
-    if (provider.specialty !== specialty) {
+    if (normalizeSpecialty(provider.specialty) !== normalizeSpecialty(specialty)) {
       return apiError(400, "specialty_mismatch", "Choose a provider that matches your selected specialty.");
     }
 
@@ -49,7 +77,7 @@ export async function POST(request: Request) {
       return apiError(409, "slot_unavailable", "That time slot is no longer available. Please choose another.");
     }
 
-    const { data: existingConversation, error: conversationError } = await supabase
+    const { data: existingConversation, error: conversationError } = await admin
       .from("conversations")
       .select("id")
       .eq("patient_id", user.id)
@@ -63,7 +91,7 @@ export async function POST(request: Request) {
     let conversation = existingConversation;
 
     if (!conversation) {
-      const insertConversationResult = await supabase
+      const insertConversationResult = await admin
         .from("conversations")
         .insert({ patient_id: user.id, provider_profile_id: provider.profile_id })
         .select("id")
@@ -76,27 +104,51 @@ export async function POST(request: Request) {
       conversation = insertConversationResult.data;
     }
 
-    const { data: appointment, error: appointmentError } = await supabase
+    const appointmentPayload = {
+      patient_id: user.id,
+      provider_id: providerId,
+      scheduled_at: scheduledAt,
+      duration_minutes: 30,
+      type: "video",
+      status: "scheduled",
+      chief_complaint: sanitizeText(chiefComplaint),
+      payment_method: paymentMethod,
+      updated_at: new Date().toISOString(),
+    };
+
+    let appointmentResult = await admin
       .from("appointments")
-      .insert({
-        patient_id: user.id,
-        provider_id: providerId,
-        scheduled_at: scheduledAt,
-        duration_minutes: 30,
-        type: "video",
-        status: "scheduled",
-        chief_complaint: sanitizeText(chiefComplaint),
-        payment_method: paymentMethod,
-        updated_at: new Date().toISOString(),
-      })
+      .insert(appointmentPayload)
       .select("id, patient_id, provider_id, scheduled_at")
       .single();
 
+    if (appointmentResult.error && ["payment_method", "updated_at", "chief_complaint"].some((column) => appointmentResult.error?.message.includes(column))) {
+      console.error("Appointment insert hit legacy schema, retrying with minimal payload:", appointmentResult.error.message);
+      appointmentResult = await admin
+        .from("appointments")
+        .insert({
+          patient_id: user.id,
+          provider_id: providerId,
+          scheduled_at: scheduledAt,
+          duration_minutes: 30,
+          type: "video",
+          status: "scheduled",
+        })
+        .select("id, patient_id, provider_id, scheduled_at")
+        .single();
+    }
+
+    const { data: appointment, error: appointmentError } = appointmentResult;
+
     if (appointmentError) {
+      console.error("Appointment create failed:", {
+        userId: user.id,
+        providerId,
+        message: appointmentError.message,
+      });
       return apiError(500, "appointment_create_failed", "Unable to book this appointment right now.");
     }
 
-    const admin = getSupabaseAdminClient();
     const notifications = [
       {
         recipient_id: user.id,
@@ -131,7 +183,15 @@ export async function POST(request: Request) {
       conversationId: conversation.id,
       redirectTo: "/appointments?toast=appointment-booked",
     });
-  } catch {
+  } catch (error) {
+    const details = formatUnknownError(error);
+    console.error("Appointment booking route failed:", details);
     return apiError(500, "appointment_booking_failed", "Unable to book this appointment right now.");
   }
 }
+
+
+
+
+
+

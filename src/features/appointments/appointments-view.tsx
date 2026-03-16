@@ -229,6 +229,7 @@ export function AppointmentsView({ currentUserId, upcomingAppointments, bookingP
   const [cancelReason, setCancelReason] = useState<(typeof cancelReasons)[number]>("schedule_conflict");
   const [pendingAction, startTransition] = useTransition();
   const [bookingSuccess, setBookingSuccess] = useState(false);
+  const [bookingRedirectTo, setBookingRedirectTo] = useState<string | null>(null);
 
   const filteredProviders = bookingProviders.filter((provider) => provider.specialty === selectedSpecialty);
   const selectedProvider = filteredProviders.find((provider) => provider.id === selectedProviderId) ?? filteredProviders[0] ?? null;
@@ -271,6 +272,20 @@ export function AppointmentsView({ currentUserId, upcomingAppointments, bookingP
       void supabase.removeChannel(channel);
     };
   }, [currentUserId, router]);
+
+  useEffect(() => {
+    if (!bookingSuccess || !bookingRedirectTo) {
+      return;
+    }
+
+    const timeout = window.setTimeout(() => {
+      window.location.assign(bookingRedirectTo);
+    }, 1500);
+
+    return () => {
+      window.clearTimeout(timeout);
+    };
+  }, [bookingSuccess, bookingRedirectTo]);
 
   function withTransientLoading(setter: (value: boolean) => void, callback: () => void) {
     setter(true);
@@ -404,10 +419,8 @@ export function AppointmentsView({ currentUserId, upcomingAppointments, bookingP
         }).catch(() => undefined);
       }
 
+      setBookingRedirectTo(data.redirectTo ?? "/appointments?toast=appointment-booked");
       setBookingSuccess(true);
-      await new Promise((resolve) => window.setTimeout(resolve, 1500));
-      router.push(data.redirectTo ?? "/appointments?toast=appointment-booked");
-      router.refresh();
     });
   }
 
@@ -832,3 +845,4 @@ export function AppointmentsView({ currentUserId, upcomingAppointments, bookingP
     </div>
   );
 }
+
