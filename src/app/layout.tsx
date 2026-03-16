@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { DM_Sans, Playfair_Display } from "next/font/google";
+import { AuthSessionSanitizer } from "@/components/auth/AuthSessionSanitizer";
 import { publicEnv } from "@/lib/env";
 import "./globals.css";
 
@@ -19,7 +20,7 @@ export const metadata: Metadata = {
     default: "Maven Clinic",
     template: "%s | Maven Clinic",
   },
-  description: "Virtual women’s health, fertility, and care coordination platform.",
+  description: "Virtual women's health, fertility, and care coordination platform.",
   applicationName: "Maven Clinic",
 };
 
@@ -31,6 +32,7 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className={`${dmSans.variable} ${playfair.variable} min-h-screen bg-[var(--slate-50)] text-[var(--foreground)] antialiased`}>
+        <AuthSessionSanitizer />
         {children}
       </body>
     </html>
